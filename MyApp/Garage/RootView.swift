@@ -34,11 +34,15 @@ struct RootView: View {
 /// preferredColorScheme çözüldükten sonraki ortamı okuyup vurgu rengini ayarlar.
 private struct ThemedTabs: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(GarageStore.self) private var store
 
     var body: some View {
         TabView {
             Tab("Araç", systemImage: "car.side.fill") { HomeView() }
-            Tab("Klima", systemImage: "fan.fill") { ClimateView() }
+            // Klima kontrolleri yalnızca örnek veri üzerinde çalışır; canlı modda gizlenir.
+            if !store.snapshot.isLive {
+                Tab("Klima", systemImage: "fan.fill") { ClimateView() }
+            }
             Tab("Şarj", systemImage: "bolt.fill") { ChargeView() }
             Tab("Konum", systemImage: "location.fill") { LocationView() }
             Tab("Daha fazla", systemImage: "ellipsis") { MoreView() }

@@ -340,22 +340,12 @@ private struct VehicleStatusCard: View {
                 Divider()
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
                     GridRow {
-                        StatTile(title: "Sol ön lastik", value: snapshot.tires.frontLeft.decimal(), unit: "PSI")
-                        StatTile(title: "Sağ ön lastik", value: snapshot.tires.frontRight.decimal(), unit: "PSI")
+                        TireTile(title: "Sol ön lastik", psi: snapshot.tires.frontLeft, celsius: snapshot.tireTemperatures.frontLeft)
+                        TireTile(title: "Sağ ön lastik", psi: snapshot.tires.frontRight, celsius: snapshot.tireTemperatures.frontRight)
                     }
                     GridRow {
-                        StatTile(title: "Sol arka lastik", value: snapshot.tires.rearLeft.decimal(), unit: "PSI")
-                        StatTile(title: "Sağ arka lastik", value: snapshot.tires.rearRight.decimal(), unit: "PSI")
-                    }
-                    if snapshot.tireTemperatures.hasValue {
-                        GridRow {
-                            StatTile(title: "Sol ön sıcaklık", value: snapshot.tireTemperatures.frontLeft.decimal(), unit: "°C")
-                            StatTile(title: "Sağ ön sıcaklık", value: snapshot.tireTemperatures.frontRight.decimal(), unit: "°C")
-                        }
-                        GridRow {
-                            StatTile(title: "Sol arka sıcaklık", value: snapshot.tireTemperatures.rearLeft.decimal(), unit: "°C")
-                            StatTile(title: "Sağ arka sıcaklık", value: snapshot.tireTemperatures.rearRight.decimal(), unit: "°C")
-                        }
+                        TireTile(title: "Sol arka lastik", psi: snapshot.tires.rearLeft, celsius: snapshot.tireTemperatures.rearLeft)
+                        TireTile(title: "Sağ arka lastik", psi: snapshot.tires.rearRight, celsius: snapshot.tireTemperatures.rearRight)
                     }
                 }
                 if snapshot.brakeWarning != nil || snapshot.engineWarning != nil {
@@ -364,6 +354,35 @@ private struct VehicleStatusCard: View {
                 }
             }
             .glassCard()
+        }
+    }
+}
+
+/// Bir lastiğin basıncını ve sıcaklığını yan yana gösterir. Sıcaklık yoksa (örnek mod) yalnızca basınç görünür.
+private struct TireTile: View {
+    let title: LocalizedStringKey
+    let psi: Double?
+    let celsius: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                reading(psi.decimal(), unit: "PSI")
+                if celsius != nil {
+                    reading(celsius.decimal(), unit: "°C")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reading(_ value: String, unit: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(value).font(.title3.weight(.semibold).monospacedDigit())
+            Text(unit).font(.caption).foregroundStyle(.secondary)
         }
     }
 }
