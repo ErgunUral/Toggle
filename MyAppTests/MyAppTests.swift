@@ -61,22 +61,6 @@ struct TripDerivationTests {
         let used = try #require(trip.batteryUsedPercent)
         #expect(abs(used - 8) < 1e-9)
         #expect(trip.averageOutsideTemp == 11)
-        let speed = try #require(trip.averageSpeedKmh)
-        #expect(abs(speed - 80) < 1e-9)
-    }
-
-    @Test func consumptionUsesCapacity() throws {
-        let trip = try #require(TripDeriver.trips(from: points).first)
-        // %8 × 82,7 kWh = 6,616 kWh; 20 km → 33,08 kWh/100 km
-        let consumption = try #require(trip.consumption(capacityKWh: 82.7))
-        #expect(abs(consumption - 33.08) < 0.001)
-        #expect(trip.consumption(capacityKWh: nil) == nil)
-    }
-
-    @Test func shortTripHasNoConsumption() throws {
-        let short = try #require(TripDeriver.trips(from: points).last)
-        #expect(short.distanceKm == 3)
-        #expect(short.consumption(capacityKWh: 82.7) == nil)
     }
 
     @Test func gapLongerThanLimitIsNotATrip() {
@@ -111,61 +95,24 @@ struct TripDerivationTests {
         #expect(trips.first?.distanceKm == 14)
     }
 
-    @Test func weightedAverageConsumptionSkipsShortTrips() {
-        let trips = TripDeriver.trips(from: points)
-        let average = TripDeriver.averageConsumption(of: trips, capacityKWh: 82.7)
-        #expect(average != nil)
-        #expect(abs((average ?? 0) - 33.08) < 0.001)
-        #expect(TripDeriver.averageConsumption(of: [], capacityKWh: 82.7) == nil)
+    @Test func tripWithoutTemperatureHasNoAverage() throws {
+        let trip = try #require(TripDeriver.trips(from: [point(0, odo: 0), point(5, odo: 10)]).first)
+        #expect(trip.averageOutsideTemp == nil)
     }
 }
 
-// MARK: - Sıcaklık – tüketim eğilimi
+// MARK: - Model adı ve lastik sıcaklıkları
 
-struct ConsumptionTrendTests {
-    private func sample(_ temperature: Double, _ consumption: Double, id: Double = 0) -> TemperatureConsumptionPoint {
-        TemperatureConsumptionPoint(id: t0.addingTimeInterval(id), temperature: temperature, consumption: consumption)
+struct VehicleInfoTests {
+    @Test @MainActor func internalModelCodeMapsToMarketingName() {
+        #expect(GarageStore.modelName("CSUV") == "T10X")
+        #expect(GarageStore.modelName("csuv") == "T10X")
+        #expect(GarageStore.modelName("T10F") == "T10F")
     }
 
-    @Test func exactLineIsRecovered() throws {
-        // tüketim = −0,5 × sıcaklık + 25
-        let points = [sample(0, 25, id: 1), sample(10, 20, id: 2), sample(20, 15, id: 3), sample(30, 10, id: 4)]
-        let trend = try #require(TripDeriver.consumptionTrend(of: points))
-        #expect(abs(trend.slope + 0.5) < 1e-9)
-        #expect(abs(trend.intercept - 25) < 1e-9)
-    }
-
-    @Test func needsThreePoints() {
-        #expect(TripDeriver.consumptionTrend(of: [sample(0, 25, id: 1), sample(20, 15, id: 2)]) == nil)
-    }
-
-    @Test func needsTemperatureSpread() {
-        // 2 °C yayılım, eşik 3 °C.
-        let points = [sample(10, 20, id: 1), sample(11, 19, id: 2), sample(12, 21, id: 3)]
-        #expect(TripDeriver.consumptionTrend(of: points) == nil)
-    }
-
-    @Test func pointsSkipTripsWithoutTemperatureOrConsumption() {
-        func trip(_ start: Double, km: Double, used: Double, temp: Double?) -> DerivedTrip {
-            DerivedTrip(
-                start: t0.addingTimeInterval(start * 60),
-                end: t0.addingTimeInterval((start + 30) * 60),
-                distanceKm: km,
-                startBattery: 0.80,
-                endBattery: 0.80 - used,
-                averageOutsideTemp: temp
-            )
-        }
-        let trips = [
-            trip(0, km: 50, used: 0.10, temp: 8),    // geçerli
-            trip(100, km: 50, used: 0.10, temp: nil), // sıcaklık yok
-            trip(200, km: 3, used: 0.05, temp: 8),    // çok kısa: tüketim yok
-        ]
-        let points = TripDeriver.temperatureConsumptionPoints(of: trips, capacityKWh: 82.7)
-        #expect(points.count == 1)
-        // %10 × 82,7 = 8,27 kWh; 50 km → 16,54 kWh/100 km
-        #expect(abs((points.first?.consumption ?? 0) - 16.54) < 1e-9)
-        #expect(points.first?.temperature == 8)
+    @Test func tireTemperaturesHasValue() {
+        #expect(!TireTemperatures().hasValue)
+        #expect(TireTemperatures(rearRight: 18).hasValue)
     }
 }
 
@@ -189,27 +136,6 @@ struct ChargeDerivationTests {
         #expect(session.endBattery == 0.66)
         #expect(session.duration == 15 * 60)
         #expect(abs(session.gainPercent - 16) < 1e-9)
-    }
-
-    @Test func energyAndPowerUseCapacity() throws {
-        let session = try #require(ChargeDeriver.sessions(from: fastCharge).first)
-        // %16 × 82,7 kWh = 13,232 kWh; 15 dk → 52,9 kW (DC)
-        let energy = try #require(session.energyKWh(capacityKWh: 82.7))
-        #expect(abs(energy - 13.232) < 0.001)
-        let power = try #require(session.averagePowerKW(capacityKWh: 82.7))
-        #expect(abs(power - 52.928) < 0.01)
-        #expect(session.isFast(capacityKWh: 82.7) == true)
-        #expect(session.energyKWh(capacityKWh: nil) == nil)
-    }
-
-    @Test func slowSessionIsNotFast() throws {
-        // 60 dakikada %50 → %60 ≈ 8,3 kWh/sa (AC)
-        let session = try #require(ChargeDeriver.sessions(from: [
-            point(0, odo: 0, battery: 0.50),
-            point(30, odo: 0, battery: 0.55),
-            point(60, odo: 0, battery: 0.60),
-        ]).first)
-        #expect(session.isFast(capacityKWh: 82.7) == false)
     }
 
     @Test func singlePointFluctuationIsNotACharge() {
@@ -254,10 +180,7 @@ struct ChargeDerivationTests {
             point(0, odo: 700, battery: 0.20), point(300, odo: 700, battery: 0.80),
         ]).first)
         #expect(session.isApproximate)
-        let energy = try #require(session.energyKWh(capacityKWh: 82.7))
-        #expect(abs(energy - 49.62) < 0.001)
-        #expect(session.averagePowerKW(capacityKWh: 82.7) == nil)
-        #expect(session.isFast(capacityKWh: 82.7) == nil)
+        #expect(abs(session.gainPercent - 60) < 1e-9)
     }
 
     @Test func gapLongerThanADayIsIgnored() {
@@ -278,15 +201,6 @@ struct ChargeDerivationTests {
         #expect(ChargeDeriver.sessions(from: [
             point(0, odo: 0, battery: nil), point(5, odo: 0, battery: 0.9),
         ]).isEmpty)
-    }
-
-    @Test func totalEnergySumsSessions() {
-        let sessions = ChargeDeriver.sessions(from: fastCharge)
-            + ChargeDeriver.sessions(from: [point(0, odo: 0, battery: 0.20), point(300, odo: 0, battery: 0.80)])
-        let total = ChargeDeriver.totalEnergyKWh(of: sessions, capacityKWh: 82.7)
-        #expect(abs((total ?? 0) - (13.232 + 49.62)) < 0.001)
-        #expect(ChargeDeriver.totalEnergyKWh(of: [], capacityKWh: 82.7) == nil)
-        #expect(ChargeDeriver.totalEnergyKWh(of: sessions, capacityKWh: nil) == nil)
     }
 }
 

@@ -12,29 +12,30 @@ struct MoreView: View {
                     NavigationLink { JourneyView() } label: {
                         row("Seyahatname", "Sürüş geçmişi ve tüketim", "safari")
                     }
-                    NavigationLink { DigitalKeyView() } label: {
-                        row("Dijital anahtar", "Telefonunu anahtar olarak kullan", "key.horizontal.fill")
-                    }
-                    NavigationLink { ServiceView() } label: {
-                        row("Servis", "Bakım kayıtları", "wrench.and.screwdriver.fill")
-                    }
-                    NavigationLink { SubscriptionsView() } label: {
-                        row("Abonelikler", "Bağlantı ve hizmet paketleri", "bag.fill")
+                    // Bu dört ekran yalnızca örnek veri gösterir, canlı kaynağı yoktur; canlı modda gizlenir.
+                    if !store.snapshot.isLive {
+                        NavigationLink { DigitalKeyView() } label: {
+                            row("Dijital anahtar", "Telefonunu anahtar olarak kullan", "key.horizontal.fill")
+                        }
+                        NavigationLink { ServiceView() } label: {
+                            row("Servis", "Bakım kayıtları", "wrench.and.screwdriver.fill")
+                        }
+                        NavigationLink { SubscriptionsView() } label: {
+                            row("Abonelikler", "Bağlantı ve hizmet paketleri", "bag.fill")
+                        }
                     }
                 }
                 Section {
-                    NavigationLink { NotificationsView() } label: {
-                        row("Bildirimler", "Araçtan gelen uyarılar", "bell.fill")
+                    if !store.snapshot.isLive {
+                        NavigationLink { NotificationsView() } label: {
+                            row("Bildirimler", "Araçtan gelen uyarılar", "bell.fill")
+                        }
                     }
                     NavigationLink { SpecsView() } label: {
                         row("Teknik bilgiler", "\(store.snapshot.model) · \(store.snapshot.edition)", "info.circle.fill")
                     }
                     NavigationLink { SettingsView() } label: {
-                        row("Ayarlar", "Bağlantı, görünüm ve araç rengi", "gearshape.fill")
-                    }
-                } footer: {
-                    if store.snapshot.isLive {
-                        Text("Servis, abonelik, bildirim, dijital anahtar ve teknik bilgiler henüz canlı değil; örnek veri gösterir.")
+                        row("Ayarlar", "Bağlantı ve görünüm", "gearshape.fill")
                     }
                 }
             }
@@ -159,10 +160,47 @@ private struct DigitalKeyView: View {
 }
 
 private struct SpecsView: View {
+    @Environment(GarageStore.self) private var store
+
+    private func ownerText(_ type: String?) -> String {
+        switch type {
+        case "Private": "Bireysel"
+        case let other?: other
+        case nil: "—"
+        }
+    }
+
+    private func keySharingText(_ enabled: Bool?) -> String {
+        switch enabled {
+        case true: "Açık"
+        case false: "Kapalı"
+        case nil: "—"
+        }
+    }
+
     var body: some View {
+        let snapshot = store.snapshot
         ListScreen(title: "Teknik bilgiler") {
-            ForEach(SampleData.specs, id: \.0) { spec in
-                LabeledContent(spec.0, value: spec.1)
+            if snapshot.isLive {
+                Section {
+                    LabeledContent("Model", value: snapshot.model)
+                    LabeledContent("Versiyon", value: snapshot.edition.isEmpty ? "—" : snapshot.edition)
+                    LabeledContent("Model yılı", value: String(snapshot.year))
+                    LabeledContent("Üretici", value: snapshot.manufacturer ?? "—")
+                    LabeledContent("Plaka", value: snapshot.plate ?? "—")
+                    LabeledContent("VIN", value: snapshot.vin)
+                    LabeledContent("Yazılım sürümü", value: snapshot.softwareVersion ?? "—")
+                    LabeledContent("Sahiplik", value: ownerText(snapshot.ownerType))
+                    LabeledContent("Anahtar paylaşımı", value: keySharingText(snapshot.keySharingEnabled))
+                } header: {
+                    Text("Aracım · canlı")
+                } footer: {
+                    Text("Yazılım sürümünün araca mı yoksa servise mi ait olduğu doğrulanmadı.")
+                }
+            } else {
+                ForEach(SampleData.specs, id: \.0) { spec in
+                    LabeledContent(spec.0, value: spec.1)
+                }
             }
         }
     }

@@ -21,7 +21,8 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     HeroSection()
-                    QuickActions()
+                    // Kapı, bagaj ve klima kutucukları örnek durumu gösterir; canlı modda gizlenir.
+                    if !store.snapshot.isLive { QuickActions() }
                     HStack(alignment: .top, spacing: 14) {
                         MeterCard(
                             title: "12 V akü",
@@ -30,13 +31,16 @@ struct HomeView: View {
                             caption: store.snapshot.auxBattery.map { "\(($0 * 100).decimal())% dolu" } ?? "Veri yok",
                             isSample: false
                         )
-                        MeterCard(
-                            title: "İnternet",
-                            symbol: "antenna.radiowaves.left.and.right",
-                            value: store.snapshot.internetUsedGB / store.snapshot.internetQuotaGB,
-                            caption: "\(store.snapshot.internetUsedGB.decimal(1)) / \(store.snapshot.internetQuotaGB.decimal()) GB",
-                            isSample: store.snapshot.isLive
-                        )
+                        // İnternet kotası için canlı kaynak yok (`dataVolume`'un anlamı belirsiz); canlı modda gizlenir.
+                        if !store.snapshot.isLive {
+                            MeterCard(
+                                title: "İnternet",
+                                symbol: "antenna.radiowaves.left.and.right",
+                                value: store.snapshot.internetUsedGB / store.snapshot.internetQuotaGB,
+                                caption: "\(store.snapshot.internetUsedGB.decimal(1)) / \(store.snapshot.internetQuotaGB.decimal()) GB",
+                                isSample: false
+                            )
+                        }
                     }
                     VehicleStatusCard()
                     TripSection()
@@ -48,8 +52,11 @@ struct HomeView: View {
             .navigationTitle(store.snapshot.name)
             .navigationSubtitle(subtitle)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Bildirimler", systemImage: "bell") { showNotifications = true }
+                // Bildirimler yalnızca örnek veri gösterir; canlı modda gizlenir.
+                if !store.snapshot.isLive {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Bildirimler", systemImage: "bell") { showNotifications = true }
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Yenile", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
@@ -100,7 +107,8 @@ private struct HeroSection: View {
                     Label("\(snapshot.range.decimal()) km menzil", systemImage: "bolt.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if let realistic = snapshot.realisticRange {
+                    // "Gerçekçi menzil" tüketimden hesaplanan bir tahmindir; canlı modda gösterilmez.
+                    if !snapshot.isLive, let realistic = snapshot.realisticRange {
                         Text("Gerçekçi ≈ \(realistic.decimal()) km · son tüketime göre")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -280,6 +288,36 @@ struct SampleTag: View {
 private struct VehicleStatusCard: View {
     @Environment(GarageStore.self) private var store
 
+    private func chargeStatusText(_ isCharging: Bool?) -> String {
+        switch isCharging {
+        case true: "Şarj oluyor"
+        case false: "Şarj olmuyor"
+        case nil: "—"
+        }
+    }
+
+    /// Fren ve sistem uyarısı durumu. Okunamayan uyarı, yok sayılmaz; "bilinmiyor" olarak belirtilir.
+    private func warningsRow(_ snapshot: VehicleSnapshot) -> some View {
+        let active = [
+            snapshot.brakeWarning == true ? "Fren uyarısı" : nil,
+            snapshot.engineWarning == true ? "Sistem uyarısı" : nil,
+        ].compactMap { $0 }
+        let unknown = snapshot.brakeWarning == nil || snapshot.engineWarning == nil
+        return Group {
+            if !active.isEmpty {
+                Label(active.joined(separator: " · "), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            } else if unknown {
+                Label("Uyarı bilgisi eksik", systemImage: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("Uyarı yok", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            }
+        }
+        .font(.subheadline.weight(.medium))
+    }
+
     var body: some View {
         let snapshot = store.snapshot
         VStack(spacing: 12) {
@@ -288,6 +326,12 @@ private struct VehicleStatusCard: View {
                 HStack(alignment: .top, spacing: 16) {
                     StatTile(title: "Kilometre", value: snapshot.odometer.decimal(), unit: "km")
                     StatTile(title: "Sürüş modu", value: snapshot.driveMode ?? "—")
+                }
+                HStack(alignment: .top, spacing: 16) {
+                    StatTile(title: "Şarj durumu", value: chargeStatusText(snapshot.isCharging))
+                    // Araçtan gelen `batteryTotalEnergyValue`; doluluk yüzdesiyle birlikte değiştiği için
+                    // kalan enerji gibi görünür, ancak adı kesin değildir.
+                    StatTile(title: "Batarya enerjisi", value: snapshot.batteryEnergyKWh.decimal(1), unit: "kWh")
                 }
                 HStack(alignment: .top, spacing: 16) {
                     StatTile(title: "Plaka", value: snapshot.plate ?? "—")
@@ -303,6 +347,20 @@ private struct VehicleStatusCard: View {
                         StatTile(title: "Sol arka lastik", value: snapshot.tires.rearLeft.decimal(), unit: "PSI")
                         StatTile(title: "Sağ arka lastik", value: snapshot.tires.rearRight.decimal(), unit: "PSI")
                     }
+                    if snapshot.tireTemperatures.hasValue {
+                        GridRow {
+                            StatTile(title: "Sol ön sıcaklık", value: snapshot.tireTemperatures.frontLeft.decimal(), unit: "°C")
+                            StatTile(title: "Sağ ön sıcaklık", value: snapshot.tireTemperatures.frontRight.decimal(), unit: "°C")
+                        }
+                        GridRow {
+                            StatTile(title: "Sol arka sıcaklık", value: snapshot.tireTemperatures.rearLeft.decimal(), unit: "°C")
+                            StatTile(title: "Sağ arka sıcaklık", value: snapshot.tireTemperatures.rearRight.decimal(), unit: "°C")
+                        }
+                    }
+                }
+                if snapshot.brakeWarning != nil || snapshot.engineWarning != nil {
+                    Divider()
+                    warningsRow(snapshot)
                 }
             }
             .glassCard()
@@ -314,8 +372,17 @@ private struct TripSection: View {
     @Environment(GarageStore.self) private var store
 
     var body: some View {
+        // Canlı modda araç sürüş özeti vermediyse örnek değerler gösterilmez.
+        if store.snapshot.isLive && !store.snapshot.tripsAreLive {
+            EmptyView()
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 12) {
-            SectionTitle(store.snapshot.isLive && !store.snapshot.tripsAreLive ? "Sürüş · örnek veri" : "Sürüş")
+            SectionTitle("Sürüş")
             NavigationLink {
                 JourneyView()
             } label: {
@@ -351,6 +418,9 @@ private struct TripCard: View {
                 GridRow {
                     StatTile(title: "Tahmini enerji", value: stats.energy.decimal(1), unit: "kWh")
                     StatTile(title: "Batarya tüketimi", value: stats.batteryPercent.decimal(1), unit: "%")
+                }
+                GridRow {
+                    StatTile(title: "Ort. hız", value: stats.averageSpeed.decimal(), unit: "km/sa")
                 }
             }
             Text(stats.note).font(.caption).foregroundStyle(.secondary)

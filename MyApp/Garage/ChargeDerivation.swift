@@ -1,8 +1,9 @@
 import Foundation
 
 /// Geçmiş noktalarından türetilen bir şarj oturumu. Konum içermez.
+/// Yalnızca kaydedilmiş batarya yüzdelerini taşır; enerji (kWh) ya da güç gibi tahmini değerler içermez.
 /// `isApproximate`: uygulama şarj sırasında kapalıydı; yalnızca önceki ve sonraki kayıt arasındaki
-/// batarya artışı biliniyor, başlangıç/bitiş zamanı ve güç bilinmiyor.
+/// batarya artışı biliniyor, başlangıç/bitiş zamanı kesin değil.
 nonisolated struct DerivedChargeSession: Identifiable, Sendable {
     let start: Date
     let end: Date
@@ -14,24 +15,6 @@ nonisolated struct DerivedChargeSession: Identifiable, Sendable {
     var id: Date { start }
     var duration: TimeInterval { end.timeIntervalSince(start) }
     var gainPercent: Double { (endBattery - startBattery) * 100 }
-
-    func energyKWh(capacityKWh: Double?) -> Double? {
-        guard let capacityKWh, capacityKWh > 0 else { return nil }
-        return (endBattery - startBattery) * capacityKWh
-    }
-
-    /// Ortalama güç (kW). Süre bilinmiyorsa ya da çok kısaysa nil; batarya yüzdesi tam sayı
-    /// olduğundan 10 dakikadan kısa oturumlarda sonuç çok kaba olurdu.
-    func averagePowerKW(capacityKWh: Double?) -> Double? {
-        guard !isApproximate, duration >= ChargeDeriver.minimumDurationForPower,
-              let energy = energyKWh(capacityKWh: capacityKWh) else { return nil }
-        return energy / (duration / 3600)
-    }
-
-    /// Ortalama güce göre DC (hızlı) şarj; güç bilinmiyorsa nil.
-    func isFast(capacityKWh: Double?) -> Bool? {
-        averagePowerKW(capacityKWh: capacityKWh).map { $0 >= ChargeDeriver.fastChargePowerKW }
-    }
 }
 
 nonisolated enum ChargeDeriver {
@@ -44,8 +27,6 @@ nonisolated enum ChargeDeriver {
     static let minimumApproximateGain = 0.03
     /// Şarj sırasında araç yerinde durur; bundan fazla kilometre artışı sürüş sayılır.
     static let maximumDrivenKm = 0.5
-    static let minimumDurationForPower: TimeInterval = 10 * 60
-    static let fastChargePowerKW = 30.0
 
     /// Araç yerindeyken batarya artan ardışık kayıtları (ya da şarj bayrağı olanları) bir oturumda toplar.
     static func sessions(from points: [HistoryPoint]) -> [DerivedChargeSession] {
@@ -93,11 +74,5 @@ nonisolated enum ChargeDeriver {
         }
         flush()
         return result
-    }
-
-    /// Toplam eklenen enerji (kWh); kapasite bilinmiyorsa nil.
-    static func totalEnergyKWh(of sessions: [DerivedChargeSession], capacityKWh: Double?) -> Double? {
-        guard capacityKWh != nil, !sessions.isEmpty else { return nil }
-        return sessions.reduce(0) { $0 + ($1.energyKWh(capacityKWh: capacityKWh) ?? 0) }
     }
 }

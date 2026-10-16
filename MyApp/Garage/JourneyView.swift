@@ -17,6 +17,8 @@ private enum JourneyRange: Int, CaseIterable, Identifiable {
 }
 
 /// Seyahatname. Canlı modda bu cihazda biriken kayıtlardan, örnek modda örnek veriden çizer.
+/// Canlı modda yalnızca ölçülmüş değerler (kilometre, batarya yüzdesi, sıcaklık, süre) ve aracın
+/// bildirdiği ortalamalar gösterilir; enerji, tüketim ya da güç gibi tahminler gösterilmez.
 struct JourneyView: View {
     @Environment(GarageStore.self) private var store
     @State private var range = JourneyRange.week
@@ -43,7 +45,6 @@ struct JourneyView: View {
     @ViewBuilder private var liveContent: some View {
         let history = store.history
         let days = range.rawValue
-        let capacity = store.snapshot.usableCapacityKWh
         let distances = history.dailyDistances(days: days)
         let batteryPoints = history.batteryPoints(lastDays: days)
         let trips = history.trips(lastDays: days)
@@ -72,21 +73,20 @@ struct JourneyView: View {
                     : "Mesafe, ardışık kilometre sayacı kayıtlarının farkından hesaplanır."
             )
             batteryChart(batteryPoints)
-            summary(trips: trips, distances: distances, recordCount: history.points.count, capacity: capacity)
-            temperatureChart(TripDeriver.temperatureConsumptionPoints(of: trips, capacityKWh: capacity))
-            tripList(trips, capacity: capacity)
+            summary(trips: trips, distances: distances, recordCount: history.points.count)
+            tripList(trips)
             VStack(spacing: 12) {
                 SectionTitle("Şarj oturumları")
-                ChargeSessionList(sessions: charges, capacityKWh: capacity)
+                ChargeSessionList(sessions: charges)
             }
         }
     }
 
-    private func summary(trips: [DerivedTrip], distances: HistoryStore.DailyDistances, recordCount: Int, capacity: Double?) -> some View {
+    private func summary(trips: [DerivedTrip], distances: HistoryStore.DailyDistances, recordCount: Int) -> some View {
         let total = distances.days.reduce(0) { $0 + $1.km }
         let longest = trips.map(\.distanceKm).max()
-        let speeds = trips.compactMap(\.averageSpeedKmh)
-        let averageSpeed = speeds.isEmpty ? nil : speeds.reduce(0, +) / Double(speeds.count)
+        // Ortalamalar aracın kendi bildirdiği "son şarjdan beri" değerleridir.
+        let vehicle = store.snapshot.tripsAreLive ? store.snapshot.sinceCharge : nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 14) {
                 StatTile(title: "Kayıtlı mesafe", value: total.decimal(), unit: "km")
@@ -95,65 +95,17 @@ struct JourneyView: View {
             }
             Divider()
             HStack(alignment: .top, spacing: 14) {
-                StatTile(
-                    title: "Ort. tüketim (geziler)",
-                    value: TripDeriver.averageConsumption(of: trips, capacityKWh: capacity).decimal(1),
-                    unit: "kWh/100 km"
-                )
-                StatTile(title: "Ort. hız", value: averageSpeed.decimal(), unit: "km/sa")
+                StatTile(title: "Ort. tüketim (araç, son şarjdan)", value: vehicle?.average.decimal(1) ?? "—", unit: "kWh/100 km")
+                StatTile(title: "Ort. hız (araç, son şarjdan)", value: vehicle?.averageSpeed.decimal() ?? "—", unit: "km/sa")
                 StatTile(title: "Kayıt", value: "\(recordCount)")
             }
         }
         .glassCard()
     }
 
-    // MARK: Sıcaklık – tüketim
-
-    /// Her nokta bir gezidir. Üç gezi yoksa grafik gösterilmez.
-    @ViewBuilder private func temperatureChart(_ points: [TemperatureConsumptionPoint]) -> some View {
-        if points.count >= 3 {
-            let trend = TripDeriver.consumptionTrend(of: points)
-            let temperatures = points.map(\.temperature)
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Sıcaklığa göre tüketim").font(.headline)
-                Chart {
-                    ForEach(points) { point in
-                        PointMark(
-                            x: .value("Sıcaklık", point.temperature),
-                            y: .value("Tüketim", point.consumption)
-                        )
-                        .foregroundStyle(Color.accentColor)
-                    }
-                    if let trend, let low = temperatures.min(), let high = temperatures.max() {
-                        LineMark(x: .value("Sıcaklık", low), y: .value("Tüketim", trend.slope * low + trend.intercept), series: .value("Eğilim", "Eğilim"))
-                        LineMark(x: .value("Sıcaklık", high), y: .value("Tüketim", trend.slope * high + trend.intercept), series: .value("Eğilim", "Eğilim"))
-                            .foregroundStyle(Color.accentColor.opacity(0.5))
-                    }
-                }
-                .chartXAxisLabel("°C")
-                .chartYAxisLabel("kWh/100 km")
-                .chartXScale(domain: .automatic(includesZero: false))
-                .chartYScale(domain: .automatic(includesZero: false))
-                .frame(height: 200)
-                if let trend {
-                    // Eğim negatifse soğudukça tüketim artıyor demektir.
-                    let change = (-trend.slope * 10).formatted(.number.precision(.fractionLength(1)).sign(strategy: .always()))
-                    Text("Eğilim: sıcaklık 10 °C düştüğünde tüketim yaklaşık \(change) kWh/100 km değişiyor.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Eğilim çizgisi için gezilerin sıcaklıkları arasında en az \(Int(TripDeriver.minimumTemperatureSpread)) °C fark gerekir.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .glassCard()
-        }
-    }
-
     // MARK: Gezi listesi
 
-    @ViewBuilder private func tripList(_ trips: [DerivedTrip], capacity: Double?) -> some View {
+    @ViewBuilder private func tripList(_ trips: [DerivedTrip]) -> some View {
         VStack(spacing: 12) {
             SectionTitle("Geziler")
             if trips.isEmpty {
@@ -174,9 +126,9 @@ struct JourneyView: View {
                             let dayTrips = groups[day] ?? []
                             ForEach(dayTrips) { trip in
                                 NavigationLink {
-                                    TripDetailView(trip: trip, capacityKWh: capacity)
+                                    TripDetailView(trip: trip)
                                 } label: {
-                                    TripRow(trip: trip, capacityKWh: capacity)
+                                    TripRow(trip: trip)
                                 }
                                 .buttonStyle(.plain)
                                 if trip.id != dayTrips.last?.id { Divider() }
@@ -185,7 +137,7 @@ struct JourneyView: View {
                         .glassCard()
                     }
                 }
-                Text("Geziler, kilometre sayacındaki artıştan türetilir; uygulama kapalıyken yapılan sürüşler ya da kısa geziler görünmeyebilir.")
+                Text("Geziler, kaydedilen kilometre sayacındaki artıştan çıkarılır; uygulama kapalıyken yapılan sürüşler ya da kısa geziler görünmeyebilir, başlangıç ve bitiş saatleri yaklaşıktır.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
@@ -267,7 +219,11 @@ struct JourneyView: View {
 
 private struct TripRow: View {
     let trip: DerivedTrip
-    let capacityKWh: Double?
+
+    private var durationText: String {
+        let minutes = Int((trip.duration / 60).rounded())
+        return minutes >= 60 ? "\(minutes / 60) sa \(minutes % 60) dk" : "\(minutes) dk"
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -278,14 +234,14 @@ private struct TripRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(Text(trip.start, format: .dateTime.hour().minute())) – \(Text(trip.end, format: .dateTime.hour().minute()))")
                     .font(.subheadline.weight(.medium))
-                Text(trip.batteryUsedPercent.map { "Batarya −\($0.decimal())%" } ?? "Batarya verisi yok")
+                Text(durationText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(trip.distanceKm.decimal(1)) km").font(.subheadline.monospacedDigit())
-                Text(trip.consumption(capacityKWh: capacityKWh).map { "\($0.decimal(1)) kWh/100 km" } ?? "—")
+                Text(trip.batteryUsedPercent.map { "Batarya −\($0.decimal())%" } ?? "Batarya verisi yok")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -301,11 +257,15 @@ private struct TripRow: View {
 struct TripDetailView: View {
     @Environment(GarageStore.self) private var store
     let trip: DerivedTrip
-    let capacityKWh: Double?
 
     private var durationText: String {
         let minutes = Int((trip.duration / 60).rounded())
         return minutes >= 60 ? "\(minutes / 60) sa \(minutes % 60) dk" : "\(minutes) dk"
+    }
+
+    private var batteryText: String {
+        guard let start = trip.startBattery, let end = trip.endBattery else { return "—" }
+        return "%\((start * 100).decimal()) → %\((end * 100).decimal())"
     }
 
     var body: some View {
@@ -319,7 +279,7 @@ struct TripDetailView: View {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
                         GridRow {
                             StatTile(title: "Mesafe", value: trip.distanceKm.decimal(1), unit: "km")
-                            StatTile(title: "Ort. hız", value: trip.averageSpeedKmh.decimal(), unit: "km/sa")
+                            StatTile(title: "Süre", value: durationText)
                         }
                         GridRow {
                             StatTile(
@@ -328,10 +288,6 @@ struct TripDetailView: View {
                                 unit: trip.batteryUsedPercent.map { "(−\($0.decimal())%)" } ?? ""
                             )
                             StatTile(title: "Dış sıcaklık", value: trip.averageOutsideTemp.decimal(), unit: "°C")
-                        }
-                        GridRow {
-                            StatTile(title: "Tahmini enerji", value: trip.energyKWh(capacityKWh: capacityKWh).decimal(1), unit: "kWh")
-                            StatTile(title: "Tüketim", value: trip.consumption(capacityKWh: capacityKWh).decimal(1), unit: "kWh/100 km")
                         }
                     }
                 }
@@ -361,7 +317,7 @@ struct TripDetailView: View {
                     .glassCard()
                 }
 
-                Text("Enerji ve tüketim, batarya yüzdesi farkından ve tahmini kullanılabilir kapasiteden hesaplanır. Araç yüzdeyi tam sayı olarak bildirdiğinden kısa gezilerde (\(Int(TripDeriver.minimumDistanceForConsumptionKm)) km altı) tüketim gösterilmez. Gezi sınırları kayıt sıklığına bağlı olarak yaklaşıktır.")
+                Text("Değerler cihazda kaydedilen ölçümlerden alınır. Gezi sınırları kayıt sıklığına bağlı olarak yaklaşıktır; enerji ya da tüketim tahmini yapılmaz.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
@@ -372,11 +328,6 @@ struct TripDetailView: View {
         .background { AppBackground() }
         .navigationTitle("Gezi")
         .navigationBarTitleDisplayModeInline()
-    }
-
-    private var batteryText: String {
-        guard let start = trip.startBattery, let end = trip.endBattery else { return "—" }
-        return "%\((start * 100).decimal()) → %\((end * 100).decimal())"
     }
 }
 

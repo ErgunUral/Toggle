@@ -73,6 +73,8 @@ struct TripStats {
     var energy: Double?
     var batteryPercent: Double?
     var note: String
+    /// km/sa
+    var averageSpeed: Double?
 }
 
 struct TirePressure {
@@ -80,6 +82,18 @@ struct TirePressure {
     var frontRight: Double?
     var rearLeft: Double?
     var rearRight: Double?
+}
+
+/// Lastik sıcaklıkları (°C).
+struct TireTemperatures {
+    var frontLeft: Double?
+    var frontRight: Double?
+    var rearLeft: Double?
+    var rearRight: Double?
+
+    var hasValue: Bool {
+        [frontLeft, frontRight, rearLeft, rearRight].contains { $0 != nil }
+    }
 }
 
 /// Araç durumu. Varsayılan değerler örnek veridir; `isLive` true ise okunabilen
@@ -106,6 +120,15 @@ struct VehicleSnapshot {
     var outside: Double? = 24
     var auxBattery: Double? = 0.92
     var tires = TirePressure(frontLeft: 36, frontRight: 36, rearLeft: 35, rearRight: 35)
+    /// Yalnızca canlı veride dolar; örnek modda boştur.
+    var tireTemperatures = TireTemperatures()
+    /// nil: okunamadı (örnek modda da yok).
+    var brakeWarning: Bool?
+    var engineWarning: Bool?
+    var softwareVersion: String?
+    var ownerType: String?
+    var keySharingEnabled: Bool?
+    var manufacturer: String?
     var internetUsedGB = 3.2
     var internetQuotaGB = 10.0
 
@@ -145,8 +168,8 @@ struct VehicleSnapshot {
         return energy / average * 100
     }
 
-    var currentTrip = TripStats(distance: 18.4, average: 16.8, energy: 3.1, batteryPercent: 3.5, note: "Bugün 08:12 başladı")
-    var sinceCharge = TripStats(distance: 142.6, average: 17.4, energy: 24.8, batteryPercent: 28, note: "Son şarj 2 gün önce")
+    var currentTrip = TripStats(distance: 18.4, average: 16.8, energy: 3.1, batteryPercent: 3.5, note: "Bugün 08:12 başladı", averageSpeed: 36)
+    var sinceCharge = TripStats(distance: 142.6, average: 17.4, energy: 24.8, batteryPercent: 28, note: "Son şarj 2 gün önce", averageSpeed: 52)
 }
 
 // MARK: - Örnek veri

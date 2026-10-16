@@ -116,6 +116,11 @@ final class GarageStore {
             }
             apply(try await service.state(for: vehicle))
             snapshot.plate = vehicle.plate.isEmpty ? nil : vehicle.plate
+            // Model yılı için liste doğru; VehicleInfo'daki yıl yanlış geliyor.
+            if let year = vehicle.year.flatMap({ Int($0) }) { snapshot.year = year }
+            snapshot.ownerType = vehicle.ownerType
+            snapshot.keySharingEnabled = vehicle.keySharingEnabled
+            snapshot.manufacturer = vehicle.manufacturer
             history.record(snapshot)
             message = nil
             AppLog.info(.refresh, "Canlı yenileme tamamlandı (\(AppLog.ms(since: started)))")
@@ -135,7 +140,7 @@ final class GarageStore {
         var next = VehicleSnapshot()
         next.isLive = true
         next.name = live.name
-        next.model = live.model
+        next.model = Self.modelName(live.model)
         next.edition = live.edition
         next.vin = AppLog.maskVIN(live.vin)
         next.battery = live.battery.map { $0 / 100 }
@@ -151,6 +156,15 @@ final class GarageStore {
             rearLeft: live.tiresRearPSI.0,
             rearRight: live.tiresRearPSI.1
         )
+        next.tireTemperatures = TireTemperatures(
+            frontLeft: live.tireTempsFrontC.0,
+            frontRight: live.tireTempsFrontC.1,
+            rearLeft: live.tireTempsRearC.0,
+            rearRight: live.tireTempsRearC.1
+        )
+        next.brakeWarning = live.brakeWarning
+        next.engineWarning = live.engineWarning
+        next.softwareVersion = live.softwareVersion
         if let latitude = live.latitude, let longitude = live.longitude {
             next.coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         } else {
@@ -164,8 +178,8 @@ final class GarageStore {
         let capacity = next.usableCapacityKWh
 
         if let trip = live.currentTrip, let sinceCharge = live.lastChargeTrip {
-            next.currentTrip = Self.stats(from: trip, capacityKWh: capacity, title: "Güncel sürüş")
-            next.sinceCharge = Self.stats(from: sinceCharge, capacityKWh: capacity, title: "Son şarjdan beri")
+            next.currentTrip = Self.stats(from: trip, title: "Güncel sürüş")
+            next.sinceCharge = Self.stats(from: sinceCharge, title: "Son şarjdan beri")
             next.tripsAreLive = true
         }
         next.isCharging = live.isCharging
@@ -198,20 +212,24 @@ final class GarageStore {
         }
     }
 
-    /// Enerji ve batarya tüketimi, ortalama tüketimden ve kullanılabilir kapasiteden tahmin edilir.
-    private static func stats(from trip: TripInfo, capacityKWh: Double?, title: String) -> TripStats {
-        let energy = trip.averageConsumption.map { trip.distanceKm * $0 / 100 }
-        let percent = energy.flatMap { energy in capacityKWh.flatMap { $0 > 0 ? energy / $0 * 100 : nil } }
+    /// Aracın bildirdiği sürüş özeti. Enerji ve batarya yüzdesi tahmini hesaplanmaz, nil kalır.
+    private static func stats(from trip: TripInfo, title: String) -> TripStats {
         var parts: [String] = []
+        // Servisin `updatedOn` değeri her çekimde "şimdi" geldiğinden sürüş zamanı olarak gösterilmez.
         if let minutes = trip.durationMinutes { parts.append("\(minutes / 60) sa \(minutes % 60) dk") }
-        if let updatedOn = trip.updatedOn { parts.append(updatedOn.shortDateTimeText) }
         return TripStats(
             distance: trip.distanceKm,
             average: trip.averageConsumption,
-            energy: energy,
-            batteryPercent: percent,
-            note: parts.isEmpty ? title : parts.joined(separator: " · ")
+            energy: nil,
+            batteryPercent: nil,
+            note: parts.isEmpty ? title : parts.joined(separator: " · "),
+            averageSpeed: trip.averageSpeedKmh
         )
+    }
+
+    /// Togg'un dahili model kodu CSUV, pazarlama adı T10X'tir.
+    static func modelName(_ code: String) -> String {
+        code.uppercased() == "CSUV" ? "T10X" : code
     }
 
     /// DRIVEMODE_COMFORT → Comfort

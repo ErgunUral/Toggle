@@ -1,21 +1,12 @@
 import SwiftUI
 
-/// Geçmiş kayıtlarından türetilen bir şarj oturumunun satırı.
+/// Geçmiş kayıtlarından türetilen bir şarj oturumunun satırı. Yalnızca kaydedilmiş batarya yüzdelerini
+/// gösterir; enerji ya da güç tahmini yapılmaz.
 struct ChargeSessionRow: View {
     let session: DerivedChargeSession
-    let capacityKWh: Double?
 
     private var title: LocalizedStringKey {
-        if session.isApproximate { return "Şarj · kayıt dışı" }
-        switch session.isFast(capacityKWh: capacityKWh) {
-        case true: return "Hızlı şarj"
-        case false: return "Şarj (AC)"
-        case nil: return "Şarj"
-        }
-    }
-
-    private var symbol: String {
-        session.isFast(capacityKWh: capacityKWh) == true ? "bolt.fill" : "powerplug.fill"
+        session.isApproximate ? "Şarj · kayıt dışı" : "Şarj"
     }
 
     private var subtitle: String {
@@ -27,24 +18,9 @@ struct ChargeSessionRow: View {
         return "\(session.start.shortDateTimeText) · \(duration)"
     }
 
-    private var energyText: String {
-        if let energy = session.energyKWh(capacityKWh: capacityKWh) {
-            return "+\(energy.decimal(1)) kWh"
-        }
-        return "+%\(session.gainPercent.decimal())"
-    }
-
-    private var detailText: String {
-        var text = "%\((session.startBattery * 100).decimal()) → %\((session.endBattery * 100).decimal())"
-        if let power = session.averagePowerKW(capacityKWh: capacityKWh) {
-            text += " · ≈ \(power.decimal()) kW"
-        }
-        return text
-    }
-
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: symbol)
+            Image(systemName: "powerplug.fill")
                 .frame(width: 36, height: 36)
                 .background(Color.accentColor.opacity(0.18), in: .circle)
                 .foregroundStyle(Color.accentColor)
@@ -57,8 +33,10 @@ struct ChargeSessionRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(energyText).font(.subheadline.monospacedDigit())
-                Text(detailText).font(.caption).foregroundStyle(.secondary)
+                Text("+%\(session.gainPercent.decimal())").font(.subheadline.monospacedDigit())
+                Text("%\((session.startBattery * 100).decimal()) → %\((session.endBattery * 100).decimal())")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 10)
@@ -68,7 +46,6 @@ struct ChargeSessionRow: View {
 /// Şarj oturumları listesi; Seyahatname ve Şarj sekmesi ortak kullanır.
 struct ChargeSessionList: View {
     let sessions: [DerivedChargeSession]
-    let capacityKWh: Double?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -80,19 +57,12 @@ struct ChargeSessionList: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(sessions) { session in
-                        ChargeSessionRow(session: session, capacityKWh: capacityKWh)
+                        ChargeSessionRow(session: session)
                         if session.id != sessions.last?.id { Divider() }
                     }
                 }
                 .glassCard()
-                if let total = ChargeDeriver.totalEnergyKWh(of: sessions, capacityKWh: capacityKWh) {
-                    Text("Toplam eklenen enerji ≈ \(total.decimal(1)) kWh")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                }
-                Text("Oturumlar, araç yerindeyken batarya yüzdesinin artmasından türetilir; enerji tahminidir. \"Kayıt dışı\" oturumlarda uygulama kapalıydı, bu yüzden süre ve güç bilinmez.")
+                Text("Oturumlar, araç yerindeyken kaydedilen batarya yüzdesinin artmasından çıkarılır. \"Kayıt dışı\" oturumlarda uygulama kapalıydı, bu yüzden başlangıç ve bitiş zamanı kesin değildir.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)

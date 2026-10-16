@@ -1,6 +1,8 @@
 import Foundation
 
 /// Geçmiş noktalarından türetilen bir gezi. Konum içermez; sınırlar kayıt sıklığına bağlı olduğundan yaklaşıktır.
+/// Yalnızca ölçülmüş değerleri taşır (kilometre sayacı, batarya yüzdesi, dış sıcaklık); enerji ya da
+/// tüketim gibi tahmini değerler içermez.
 nonisolated struct DerivedTrip: Identifiable, Sendable {
     let start: Date
     let end: Date
@@ -13,37 +15,11 @@ nonisolated struct DerivedTrip: Identifiable, Sendable {
     var id: Date { start }
     var duration: TimeInterval { end.timeIntervalSince(start) }
 
-    var averageSpeedKmh: Double? {
-        duration > 0 ? distanceKm / (duration / 3600) : nil
-    }
-
-    /// Gezi boyunca harcanan batarya yüzdesi; gezi sırasında şarj olduysa ya da veri yoksa nil.
+    /// Gezi boyunca kaydedilen batarya yüzdesi farkı; gezi sırasında şarj olduysa ya da veri yoksa nil.
     var batteryUsedPercent: Double? {
         guard let startBattery, let endBattery, startBattery >= endBattery else { return nil }
         return (startBattery - endBattery) * 100
     }
-
-    func energyKWh(capacityKWh: Double?) -> Double? {
-        guard let used = batteryUsedPercent, let capacityKWh, capacityKWh > 0 else { return nil }
-        return used / 100 * capacityKWh
-    }
-
-    /// kWh/100 km. Araç bataryayı tam yüzde olarak bildirdiğinden kısa gezilerde sonuç çok kabadır;
-    /// bu yüzden en az `TripDeriver.minimumDistanceForConsumptionKm` mesafe aranır.
-    func consumption(capacityKWh: Double?) -> Double? {
-        guard distanceKm >= TripDeriver.minimumDistanceForConsumptionKm,
-              let energy = energyKWh(capacityKWh: capacityKWh), energy > 0 else { return nil }
-        return energy / distanceKm * 100
-    }
-}
-
-/// Bir gezinin ortalama dış sıcaklığı ve tüketimi.
-nonisolated struct TemperatureConsumptionPoint: Identifiable, Sendable {
-    let id: Date
-    /// °C
-    let temperature: Double
-    /// kWh/100 km
-    let consumption: Double
 }
 
 nonisolated enum TripDeriver {
@@ -51,9 +27,6 @@ nonisolated enum TripDeriver {
     static let maximumGap: TimeInterval = 30 * 60
     /// Bundan kısa kilometre farkı gezi sayılmaz (sensör gürültüsü).
     static let minimumTripDistanceKm = 0.5
-    static let minimumDistanceForConsumptionKm = 5.0
-    /// Sıcaklık–tüketim eğilimi için gezilerin sıcaklıkları arasında aranan en az fark (°C).
-    static let minimumTemperatureSpread = 3.0
 
     /// Kilometre sayacı artan ardışık kayıtları bir gezide toplar. Sayaç değişmeyen, sayacı olmayan
     /// ya da `maximumGap`'ten uzun aralıklar geziyi bitirir.
@@ -91,42 +64,5 @@ nonisolated enum TripDeriver {
         }
         flush()
         return result
-    }
-
-    /// Hem dış sıcaklığı hem tüketimi bilinen gezilerin noktaları.
-    static func temperatureConsumptionPoints(of trips: [DerivedTrip], capacityKWh: Double?) -> [TemperatureConsumptionPoint] {
-        trips.compactMap { trip in
-            guard let temperature = trip.averageOutsideTemp,
-                  let consumption = trip.consumption(capacityKWh: capacityKWh) else { return nil }
-            return TemperatureConsumptionPoint(id: trip.start, temperature: temperature, consumption: consumption)
-        }
-    }
-
-    /// En küçük kareler doğrusu (tüketim = eğim × sıcaklık + sabit). Anlamlı bir eğilim için en az
-    /// 3 nokta ve en az `minimumTemperatureSpread` °C sıcaklık yayılımı gerekir; yoksa nil.
-    static func consumptionTrend(of points: [TemperatureConsumptionPoint]) -> (slope: Double, intercept: Double)? {
-        guard points.count >= 3,
-              let low = points.map(\.temperature).min(),
-              let high = points.map(\.temperature).max(),
-              high - low >= minimumTemperatureSpread else { return nil }
-        let count = Double(points.count)
-        let meanX = points.reduce(0) { $0 + $1.temperature } / count
-        let meanY = points.reduce(0) { $0 + $1.consumption } / count
-        let sxx = points.reduce(0) { $0 + ($1.temperature - meanX) * ($1.temperature - meanX) }
-        let sxy = points.reduce(0) { $0 + ($1.temperature - meanX) * ($1.consumption - meanY) }
-        guard sxx > 0 else { return nil }
-        let slope = sxy / sxx
-        return (slope, meanY - slope * meanX)
-    }
-
-    /// Geziler arası ağırlıklı ortalama tüketim (kWh/100 km); hesaplanabilen gezi yoksa nil.
-    static func averageConsumption(of trips: [DerivedTrip], capacityKWh: Double?) -> Double? {
-        var energy = 0.0
-        var distance = 0.0
-        for trip in trips where trip.consumption(capacityKWh: capacityKWh) != nil {
-            energy += trip.energyKWh(capacityKWh: capacityKWh) ?? 0
-            distance += trip.distanceKm
-        }
-        return distance > 0 ? energy / distance * 100 : nil
     }
 }

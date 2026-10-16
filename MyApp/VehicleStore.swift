@@ -14,6 +14,11 @@ nonisolated struct VehicleSummary: Identifiable, Hashable, Sendable {
     /// Araç listesindeki renk adı. VehicleInfo'daki `color` ile çeliştiğinde (BLUE ↔ Grey)
     /// liste doğru çıktığından renk için birincil kaynaktır.
     let color: String?
+    /// Araç listesindeki model yılı. VehicleInfo'daki `year` yanlış geldiğinden bu kullanılır.
+    let year: String?
+    let ownerType: String?
+    let keySharingEnabled: Bool?
+    let manufacturer: String?
     var id: String { vin }
 }
 
@@ -21,6 +26,8 @@ nonisolated struct VehicleSummary: Identifiable, Hashable, Sendable {
 nonisolated struct TripInfo: Sendable {
     var distanceKm: Double
     var averageConsumption: Double?
+    /// km/sa. Mesafe ve süreyle tutarlı çıktığı görüldü (178 km / 8 sa 16 dk ≈ 21).
+    var averageSpeedKmh: Double?
     var durationMinutes: Int?
     var updatedOn: Date?
 }
@@ -52,6 +59,14 @@ nonisolated struct VehicleState: Sendable {
     var colorName: String?
     var chargeMode: String?
     var driveMode: String?
+    /// °C (ön sol/sağ, arka sol/sağ). Birim varsayımdır; park halindeki araçta 17–19 geldi.
+    var tireTempsFrontC: (Double?, Double?) = (nil, nil)
+    var tireTempsRearC: (Double?, Double?) = (nil, nil)
+    /// API anahtarı `breakWarning` (fren uyarısı) ve `engineWarning`; nil: okunamadı.
+    var brakeWarning: Bool?
+    var engineWarning: Bool?
+    /// `versionInfo.version`. Aracın mı yoksa servisin sürümü mü olduğu kesin değil.
+    var softwareVersion: String?
 }
 
 extension VehicleState {
@@ -366,7 +381,7 @@ actor TogglService {
             for entry in entries {
                 let dict = entry as? [String: Any] ?? ["vin": "\(entry)"]
                 let vin = (dict["vin"] as? String) ?? (dict["vinNumber"] as? String) ?? ""
-                AppLog.debug(.parse, "\(key): liste rengi=\(dict["color"] ?? "yok"), model=\(dict["model"] ?? "yok"), yıl=\(dict["year"] ?? "yok")")
+                AppLog.debug(.parse, "\(key): liste rengi=\(dict["color"] ?? "yok"), model=\(dict["model"] ?? "yok"), yıl=\(dict["year"] ?? "yok"), sahiplik=\(dict["ownerType"] ?? "yok"), anahtar paylaşımı=\(dict["keysharingEnabled"] ?? "yok"), üretici=\(dict["manufacture"] ?? "yok")")
                 guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil,
                       seen.insert(vin).inserted else {
                     skipped += 1
@@ -379,7 +394,11 @@ actor TogglService {
                     plate: dict["plateNumber"] as? String ?? "",
                     model: dict["model"] as? String ?? "T10X",
                     edition: dict["edition"] as? String ?? "",
-                    color: dict["color"] as? String
+                    color: dict["color"] as? String,
+                    year: (dict["year"] as? String) ?? (dict["year"] as? Int).map(String.init),
+                    ownerType: dict["ownerType"] as? String,
+                    keySharingEnabled: dict["keysharingEnabled"] as? Bool,
+                    manufacturer: dict["manufacture"] as? String
                 ))
             }
         }
@@ -447,6 +466,7 @@ actor TogglService {
             return TripInfo(
                 distanceKm: meters / 1000,
                 averageConsumption: num(dict["avgConsumptions"]),
+                averageSpeedKmh: num(dict["avgSpeed"]),
                 durationMinutes: Int(minutes),
                 updatedOn: parseDate(dict["updatedOn"] as? String)
             )
@@ -458,6 +478,16 @@ actor TogglService {
         state.colorName = vehicle.color ?? (json["color"] as? String)
         state.chargeMode = at(t, "obcState", "content", "chargeMode", "chargeModeEnumValue") as? String
         state.driveMode = at(t, "driveMode", "content", "driveModeState", "driveMode") as? String
+
+        let tireTemps = at(t, "tireTemperature", "tireTemperatureContent")
+        func tireTemp(_ position: String) -> Double? {
+            num(at(tireTemps, position + "TireTemp", position + "TireTempValue"))
+        }
+        state.tireTempsFrontC = (tireTemp("frontLeft"), tireTemp("frontRight"))
+        state.tireTempsRearC = (tireTemp("rearLeft"), tireTemp("rearRight"))
+        state.brakeWarning = t["breakWarning"] as? Bool
+        state.engineWarning = t["engineWarning"] as? Bool
+        state.softwareVersion = at(json, "versionInfo", "version") as? String
         AppLog.debug(.parse, "Sürüş özetleri: güncel=\(state.currentTrip == nil ? "yok" : "var"), sonŞarj=\(state.lastChargeTrip == nil ? "yok" : "var"); şarj modu=\(state.chargeMode ?? "yok"); sürüş modu=\(state.driveMode ?? "yok"); batarya enerjisi=\(state.batteryEnergyKWh.map { String(format: "%.2f kWh", $0) } ?? "yok") (ham), renk=\(state.colorName ?? "yok")")
         Self.logFieldSummary(state)
         Self.logRawValues(json: json, telemetry: t)
@@ -469,15 +499,16 @@ actor TogglService {
         // Ham sürüş ve telemetri verisi kişiseldir; yalnızca hata ayıklama derlemesinde yazılır.
         #if DEBUG
         var picked: [String: Any] = [:]
-        for key in ["color", "dataVolume", "dateFormat", "lastTripInfo", "year", "model"] {
+        for key in ["color", "dataVolume", "dateFormat", "lastTripInfo", "year", "model", "manufacture", "versionInfo"] {
             if let value = json[key] { picked[key] = value }
         }
-        for key in ["obcState", "driveMode", "vehicleStatus", "odometerStatus", "vehicleRange", "battery", "tirePressure"] {
+        for key in ["obcState", "driveMode", "vehicleStatus", "odometerStatus", "vehicleRange", "battery", "tirePressure",
+                    "tireTemperature", "breakWarning", "engineWarning"] {
             if let value = t[key] { picked["telemetry." + key] = value }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: picked, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return }
-        AppLog.debug(.parse, "Ham değerler (konum/VIN hariç): \(text.prefix(3500))")
+        AppLog.debug(.parse, "Ham değerler (konum/VIN hariç): \(text.prefix(8000))")
         #endif
     }
 
@@ -496,7 +527,7 @@ actor TogglService {
         ]
         let missing = checks.filter { !$0.1 }.map(\.0)
         AppLog.info(.parse, "Alan özeti: \(checks.count - missing.count)/\(checks.count) okundu, eksik=\(missing.isEmpty ? "yok" : missing.joined(separator: ","))")
-        AppLog.debug(.parse, "Değerler: battery=\(f(state.battery))%, range=\(f(state.range)) km, odometer=\(f(state.odometer)) km, inside=\(f(state.inside))°, outside=\(f(state.outside))°, aux=\(f(state.auxBattery))%, lastik PSI=[\(f(state.tiresFrontPSI.0)), \(f(state.tiresFrontPSI.1)), \(f(state.tiresRearPSI.0)), \(f(state.tiresRearPSI.1))], konum=\(located ? "var" : "yok")")
+        AppLog.debug(.parse, "Değerler: battery=\(f(state.battery))%, range=\(f(state.range)) km, odometer=\(f(state.odometer)) km, inside=\(f(state.inside))°, outside=\(f(state.outside))°, aux=\(f(state.auxBattery))%, lastik PSI=[\(f(state.tiresFrontPSI.0)), \(f(state.tiresFrontPSI.1)), \(f(state.tiresRearPSI.0)), \(f(state.tiresRearPSI.1))], konum=\(located ? "var" : "yok"), lastik °C=[\(f(state.tireTempsFrontC.0)), \(f(state.tireTempsFrontC.1)), \(f(state.tireTempsRearC.0)), \(f(state.tireTempsRearC.1))], fren uyarısı=\(state.brakeWarning.map(String.init(describing:)) ?? "yok"), sistem uyarısı=\(state.engineWarning.map(String.init(describing:)) ?? "yok"), sürüm=\(state.softwareVersion ?? "yok"), ort. hız=\(f(state.currentTrip?.averageSpeedKmh))/\(f(state.lastChargeTrip?.averageSpeedKmh)) km/sa")
     }
 
     // MARK: Yardımcılar
