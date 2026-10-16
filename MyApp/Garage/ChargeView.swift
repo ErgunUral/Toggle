@@ -29,7 +29,7 @@ struct ChargeView: View {
                     statusCard
                     // Planlayıcının çıktıları (ücret, AC/DC süreleri) varsayıma dayandığından canlı modda gösterilmez.
                     if store.snapshot.isLive {
-                        // Şarj geçmişi için canlı kaynak yok; bu cihazdaki kayıtlardan çıkarılan oturumlar gösterilir.
+                        ServerRecordSection(isCharge: true, period: .monthly, limit: 5)
                         liveSessions
                     } else {
                         planner
@@ -105,7 +105,7 @@ struct ChargeView: View {
 
     private var liveSessions: some View {
         VStack(spacing: 12) {
-            SectionTitle("Son şarjlar")
+            SectionTitle("Bu cihazdaki son şarjlar")
             ChargeSessionList(sessions: Array(store.history.chargeSessions(lastDays: 90).prefix(5)))
         }
     }

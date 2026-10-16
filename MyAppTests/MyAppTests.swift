@@ -313,3 +313,83 @@ struct VehicleColorTests {
         #expect(VehicleColor(apiName: "PURPLE") == nil)
     }
 }
+
+// MARK: - Dönem özeti
+
+struct PeriodSummaryTests {
+    private func trip(km: Double, minutes: Double, from: Double?, to: Double?) -> DerivedTrip {
+        DerivedTrip(
+            start: t0,
+            end: t0.addingTimeInterval(minutes * 60),
+            distanceKm: km,
+            startBattery: from,
+            endBattery: to,
+            averageOutsideTemp: nil
+        )
+    }
+
+    @Test func totalsAndAverageSpeed() {
+        let summary = PeriodSummary(trips: [
+            trip(km: 30, minutes: 30, from: 0.80, to: 0.74),
+            trip(km: 60, minutes: 60, from: 0.74, to: 0.62),
+        ])
+        #expect(summary.tripCount == 2)
+        #expect(summary.distanceKm == 90)
+        #expect(summary.averageSpeedKmh == 60)
+    }
+
+    @Test func economyScoreFromBatteryUse() throws {
+        // 90 km'de %18 düştü → 100 km'de %20 → (32 − 20) / 20 × 100 = 60.
+        let summary = PeriodSummary(trips: [
+            trip(km: 30, minutes: 30, from: 0.80, to: 0.74),
+            trip(km: 60, minutes: 60, from: 0.74, to: 0.62),
+        ])
+        let per100 = try #require(summary.batteryPercentPer100Km)
+        #expect(abs(per100 - 20) < 0.0001)
+        let score = try #require(summary.economyScore)
+        #expect(abs(score - 60) < 0.0001)
+    }
+
+    @Test func noScoreWithoutEnoughBatteryData() {
+        let short = PeriodSummary(trips: [trip(km: 5, minutes: 10, from: 0.80, to: 0.78)])
+        #expect(short.economyScore == nil)
+        let missing = PeriodSummary(trips: [trip(km: 40, minutes: 40, from: nil, to: nil)])
+        #expect(missing.economyScore == nil)
+    }
+
+    @Test func scoreIsClamped() throws {
+        let thrifty = PeriodSummary(trips: [trip(km: 100, minutes: 90, from: 0.90, to: 0.85)])
+        #expect(try #require(thrifty.economyScore) == 100)
+        let heavy = PeriodSummary(trips: [trip(km: 50, minutes: 40, from: 0.90, to: 0.60)])
+        #expect(try #require(heavy.economyScore) == 0)
+    }
+}
+
+// MARK: - Sunucu analizleri
+
+@Suite struct ServerAnalyticsTests {
+    @Test func sarmalanmisYanitiCozerVeAlternatifAnahtarlariOkur() {
+        let json: [String: Any] = ["data": [
+            "journeys": [
+                ["journey_id": "a", "start_ts": "2026-10-16T08:00:00Z", "distance_km": 12.5, "kwh_consumed": "2.1"],
+                ["journey_id": "a", "start_ts": "2026-10-16T08:00:00Z", "distance_km": 99],
+                ["journey_id": "b", "start_ts": "2026-10-17T08:00:00Z", "total_distance_km": 3],
+            ],
+            "journeys_pagination": ["has_more": true],
+            "totals": ["total_km": 15.5],
+        ]]
+        let page = ServerAnalytics.page(from: json, isCharge: false)
+        #expect(page.records.map(\.id) == ["b", "a"])
+        #expect(page.records.last?.distanceKm == 12.5)
+        #expect(page.records.last?.consumedKWh == 2.1)
+        #expect(page.totals.distanceKm == 15.5)
+        #expect(page.hasMore)
+    }
+
+    @Test func ozetBloklariniSirayladaDondurur() {
+        let json: [String: Any] = ["all_time": ["journey_count": 4], "this_month": ["journey_count": 1]]
+        let blocks = ServerAnalytics.insights(from: json)
+        #expect(blocks.map(\.key) == ["this_month", "all_time"])
+        #expect(blocks.last?.metrics.journeyCount == 4)
+    }
+}

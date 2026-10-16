@@ -3,7 +3,7 @@ import Charts
 
 /// Seyahatname gösterim aralığı (gün).
 private enum JourneyRange: Int, CaseIterable, Identifiable {
-    case week = 7, month = 30, quarter = 90
+    case week = 7, month = 30, quarter = 90, year = 365
 
     var id: Int { rawValue }
 
@@ -12,6 +12,7 @@ private enum JourneyRange: Int, CaseIterable, Identifiable {
         case .week: "7 gün"
         case .month: "30 gün"
         case .quarter: "90 gün"
+        case .year: "Yıl"
         }
     }
 }
@@ -27,6 +28,13 @@ struct JourneyView: View {
         ScrollView {
             VStack(spacing: 22) {
                 if store.snapshot.isLive {
+                    NavigationLink {
+                        ServerAnalyticsView()
+                    } label: {
+                        Label("Sunucu analizleri", systemImage: "icloud.and.arrow.down")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .glassCard()
                     liveContent
                 } else {
                     sampleContent
@@ -45,6 +53,8 @@ struct JourneyView: View {
     @ViewBuilder private var liveContent: some View {
         let history = store.history
         let days = range.rawValue
+
+        ServerRecordSection(isCharge: false, period: .monthly, limit: 5)
         let distances = history.dailyDistances(days: days)
         let batteryPoints = history.batteryPoints(lastDays: days)
         let trips = history.trips(lastDays: days)
@@ -99,8 +109,30 @@ struct JourneyView: View {
                 StatTile(title: "Ort. hız (araç, son şarjdan)", value: vehicle?.averageSpeed.decimal() ?? "—", unit: "km/sa")
                 StatTile(title: "Kayıt", value: "\(recordCount)")
             }
+            Divider()
+            periodStats(PeriodSummary(trips: trips))
         }
         .glassCard()
+    }
+
+    /// Seçili aralıktaki gezilerden bu cihazda hesaplanan özet ve ekonomi puanı.
+    private func periodStats(_ period: PeriodSummary) -> some View {
+        let duration = period.duration
+        let hours = Int(duration / 3600)
+        let minutes = Int(duration / 60) % 60
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                StatTile(title: "Sürüş süresi", value: hours > 0 ? "\(hours) sa \(minutes) dk" : "\(minutes) dk")
+                StatTile(title: "Ort. hız (kayıtlı)", value: period.averageSpeedKmh?.decimal() ?? "—", unit: "km/sa")
+            }
+            HStack(alignment: .top, spacing: 14) {
+                StatTile(title: "Batarya / 100 km", value: period.batteryPercentPer100Km?.decimal(1) ?? "—", unit: "%")
+                StatTile(title: "Ekonomi puanı (tahmini)", value: period.economyScore?.decimal() ?? "—", unit: "/100")
+            }
+            Text("Puan, 100 km'de kullanılan batarya yüzdesinden hesaplanır (%\(PeriodSummary.bestPercentPer100Km.decimal()) ve altı 100, %\(PeriodSummary.worstPercentPer100Km.decimal()) ve üstü 0). Bu uygulamaya özgü tahmini bir ölçektir; en az \(PeriodSummary.minimumTrackedKm.decimal()) km batarya verili gezi gerekir.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: Gezi listesi
@@ -198,10 +230,11 @@ struct JourneyView: View {
                         AxisValueLabel(format: .dateTime.weekday(.narrow))
                     }
                 } else {
-                    // Uzun aralıkta her gün yerine haftalık etiket.
-                    AxisMarks(values: .stride(by: .weekOfYear)) {
+                    // Uzun aralıkta her gün yerine haftalık (yıllıkta aylık) etiket.
+                    let monthly = days.count > 120
+                    AxisMarks(values: .stride(by: monthly ? .month : .weekOfYear)) {
                         AxisGridLine()
-                        AxisValueLabel(format: .dateTime.day().month(.defaultDigits))
+                        AxisValueLabel(format: monthly ? .dateTime.month(.abbreviated) : .dateTime.day().month(.defaultDigits))
                     }
                 }
             }

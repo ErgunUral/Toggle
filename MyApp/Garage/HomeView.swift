@@ -24,21 +24,27 @@ struct HomeView: View {
                     // Kapı, bagaj ve klima kutucukları örnek durumu gösterir; canlı modda gizlenir.
                     if !store.snapshot.isLive { QuickActions() }
                     HStack(alignment: .top, spacing: 14) {
-                        MeterCard(
-                            title: "12 V akü",
-                            symbol: "minus.plus.batteryblock",
-                            value: store.snapshot.auxBattery ?? 0,
-                            caption: store.snapshot.auxBattery.map { "\(($0 * 100).decimal())% dolu" } ?? "Veri yok",
-                            isSample: false
-                        )
-                        // İnternet kotası için canlı kaynak yok (`dataVolume`'un anlamı belirsiz); canlı modda gizlenir.
-                        if !store.snapshot.isLive {
+                        NavigationLink {
+                            AuxHistoryView()
+                        } label: {
+                            MeterCard(
+                                title: "12 V akü",
+                                symbol: "minus.plus.batteryblock",
+                                value: store.snapshot.auxBattery ?? 0,
+                                caption: store.snapshot.auxBattery.map { "\(($0 * 100).decimal())% dolu" } ?? "Veri yok",
+                                isSample: false,
+                                isLow: AuxBattery.isLow(store.snapshot.auxBattery)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        if !store.snapshot.isLive || store.snapshot.internetQuotaIsLive {
                             MeterCard(
                                 title: "İnternet",
                                 symbol: "antenna.radiowaves.left.and.right",
                                 value: store.snapshot.internetUsedGB / store.snapshot.internetQuotaGB,
-                                caption: "\(store.snapshot.internetUsedGB.decimal(1)) / \(store.snapshot.internetQuotaGB.decimal()) GB",
-                                isSample: false
+                                caption: "\(store.snapshot.internetUsedGB.decimal(1)) / \(store.snapshot.internetQuotaGB.decimal()) GB kullanıldı",
+                                isSample: !store.snapshot.internetQuotaIsLive
                             )
                         }
                     }
@@ -258,15 +264,19 @@ private struct MeterCard: View {
     let caption: String
     /// Canlı modda, canlı kaynağı olmayan kartları "Örnek" diye işaretler.
     let isSample: Bool
+    /// Düşük değerde başlık ve değer kırmızı gösterilir.
+    var isLow = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: symbol)
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isLow ? Color.red : Color.secondary)
             MeterBar(value: value)
             HStack {
-                Text(caption).font(.callout.weight(.medium).monospacedDigit())
+                Text(caption)
+                    .font(.callout.weight(.medium).monospacedDigit())
+                    .foregroundStyle(isLow ? Color.red : Color.primary)
                 if isSample { SampleTag() }
             }
         }

@@ -119,6 +119,7 @@ struct VehicleSnapshot {
     var inside: Double? = 26
     var outside: Double? = 24
     var auxBattery: Double? = 0.92
+    var internetQuotaIsLive = false
     var tires = TirePressure(frontLeft: 36, frontRight: 36, rearLeft: 35, rearRight: 35)
     /// Yalnızca canlı veride dolar; örnek modda boştur.
     var tireTemperatures = TireTemperatures()

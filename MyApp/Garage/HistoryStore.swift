@@ -9,6 +9,8 @@ nonisolated struct HistoryPoint: Codable, Identifiable, Sendable {
     var odometerKm: Double?
     var outsideTemp: Double?
     var isCharging: Bool?
+    /// 12 V yardımcı akü doluluğu, 0...1. Eski kayıtlarda yoktur.
+    var auxBattery: Double?
 
     var id: Date { date }
 }
@@ -49,7 +51,8 @@ final class HistoryStore {
             rangeKm: snapshot.range,
             odometerKm: snapshot.odometer,
             outsideTemp: snapshot.outside,
-            isCharging: snapshot.isCharging
+            isCharging: snapshot.isCharging,
+            auxBattery: snapshot.auxBattery
         ))
         if points.count > maximumPoints { points.removeFirst(points.count - maximumPoints) }
         AppLog.info(.refresh, "Geçmiş: kayıt eklendi (toplam \(points.count))")
@@ -102,6 +105,14 @@ final class HistoryStore {
     func batteryPoints(lastDays days: Int = 7, now: Date = .now) -> [HistoryPoint] {
         let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
         return points.filter { $0.date >= start && $0.battery != nil }
+    }
+
+    /// Son `days` gündeki 12 V akü ölçümleri, eskiden yeniye.
+    func auxBatteryPoints(lastDays days: Int, now: Date = .now) -> [HistoryPoint] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return points
+            .filter { $0.date >= start && $0.auxBattery != nil }
+            .sorted { $0.date < $1.date }
     }
 
     /// Son `days` günde biten geziler, en yeni başta.

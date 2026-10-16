@@ -12,23 +12,30 @@ struct MoreView: View {
                     NavigationLink { JourneyView() } label: {
                         row("Seyahatname", "Sürüş geçmişi ve tüketim", "safari")
                     }
-                    // Bu dört ekran yalnızca örnek veri gösterir, canlı kaynağı yoktur; canlı modda gizlenir.
-                    if !store.snapshot.isLive {
-                        NavigationLink { DigitalKeyView() } label: {
-                            row("Dijital anahtar", "Telefonunu anahtar olarak kullan", "key.horizontal.fill")
+                    if store.isSignedIn {
+                        NavigationLink { LiveServiceView() } label: {
+                            row("Servis", "Canlı bakım kayıtları", "wrench.and.screwdriver.fill")
                         }
+                        NavigationLink { LiveSubscriptionsView() } label: {
+                            row("Abonelikler", "Canlı bağlantı ve hizmet paketleri", "bag.fill")
+                        }
+                    } else if !store.snapshot.isLive {
                         NavigationLink { ServiceView() } label: {
-                            row("Servis", "Bakım kayıtları", "wrench.and.screwdriver.fill")
+                            row("Servis", "Örnek bakım kayıtları", "wrench.and.screwdriver.fill")
                         }
                         NavigationLink { SubscriptionsView() } label: {
-                            row("Abonelikler", "Bağlantı ve hizmet paketleri", "bag.fill")
+                            row("Abonelikler", "Örnek bağlantı ve hizmet paketleri", "bag.fill")
                         }
                     }
                 }
                 Section {
-                    if !store.snapshot.isLive {
+                    if store.isSignedIn {
+                        NavigationLink { LiveNotificationsView() } label: {
+                            row("Bildirimler", "Canlı araç bildirimleri", "bell.fill")
+                        }
+                    } else if !store.snapshot.isLive {
                         NavigationLink { NotificationsView() } label: {
-                            row("Bildirimler", "Araçtan gelen uyarılar", "bell.fill")
+                            row("Bildirimler", "Örnek araç uyarıları", "bell.fill")
                         }
                     }
                     NavigationLink { SpecsView() } label: {
@@ -139,21 +146,88 @@ private struct SubscriptionsView: View {
 }
 
 private struct DigitalKeyView: View {
+    @State private var bluetooth = BLEGarageManager()
+    @State private var digitalKeyStore = DigitalKeyStore()
+
     var body: some View {
         ListScreen(title: "Dijital anahtar") {
-            ForEach(SampleData.digitalKeys) { key in
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(key.name).font(.subheadline.weight(.semibold))
-                        Text(key.detail).font(.caption).foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: key.symbol).foregroundStyle(Color.accentColor)
+            Section {
+                LabeledContent("Durum", value: bluetooth.state.title)
+
+                if let name = bluetooth.discoveredName {
+                    LabeledContent("Bulunan araç", value: name)
                 }
-                .padding(.vertical, 4)
+
+                if let rssi = bluetooth.discoveredRSSI {
+                    LabeledContent("Sinyal", value: "\(rssi) dBm")
+                }
+
+                if bluetooth.state == .connected {
+                    Button("Bağlantıyı kes", systemImage: "bolt.horizontal.circle") {
+                        bluetooth.disconnect()
+                    }
+                } else if bluetooth.discoveredName != nil {
+                    Button("Araca bağlan", systemImage: "link") {
+                        bluetooth.connectToDiscoveredVehicle()
+                    }
+                } else {
+                    Button("Araç ara", systemImage: "antenna.radiowaves.left.and.right") {
+                        bluetooth.startScan()
+                    }
+                }
+
+                if !bluetooth.discoveredCharacteristics.isEmpty {
+                    Text("\(bluetooth.discoveredCharacteristics.count) BLE karakteristiği keşfedildi")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("BLE bağlantısı")
+            } footer: {
+                Text("Bu sürüm yalnızca BLE servisini keşfeder ve bağlantı durumunu gösterir; araç komutu göndermez.")
             }
-            Section {} footer: {
-                Text("Örnek veri. Bluetooth eşleştirme ve araç sahipliği doğrulaması henüz uygulanmadı.")
+
+            Section {
+                LabeledContent(
+                    "Yerel anahtar",
+                    value: digitalKeyStore.hasLocalKey ? "Hazır" : "Oluşturulmadı"
+                )
+
+                if digitalKeyStore.hasLocalKey {
+                    Button("Yerel anahtarı sil", systemImage: "trash", role: .destructive) {
+                        digitalKeyStore.deleteLocalKey()
+                    }
+                } else {
+                    Button("Güvenli anahtar çifti oluştur", systemImage: "key") {
+                        digitalKeyStore.createKeyIfNeeded()
+                    }
+                }
+
+                if let errorMessage = digitalKeyStore.errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Dijital anahtar hazırlığı")
+            } footer: {
+                Text("Anahtar cihazın Secure Enclave’inde tutulur. Araç sertifikası, VIN eşleştirmesi ve BLE komutları henüz etkin değildir.")
+            }
+
+            Section {
+                ForEach(SampleData.digitalKeys) { key in
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(key.name).font(.subheadline.weight(.semibold))
+                            Text(key.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: key.symbol).foregroundStyle(Color.accentColor)
+                    }
+                    .padding(.vertical, 4)
+                }
+            } footer: {
+                Text("Kayıtlı araç anahtarları örnek veridir.")
             }
         }
     }
@@ -210,6 +284,7 @@ struct SettingsView: View {
     @Environment(GarageStore.self) private var store
     @Environment(\.webAuthenticationSession) private var webSession
     @AppStorage("theme") private var themeRaw = AppTheme.system.rawValue
+    @AppStorage(GarageStore.climateDefaultKey) private var climateDefault = 22
 
     var body: some View {
         ListScreen(title: "Ayarlar") {
@@ -218,6 +293,16 @@ struct SettingsView: View {
                     ForEach(AppTheme.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
+            }
+            // Klima yalnızca örnek modda kullanılabildiğinden ayar da orada gösterilir.
+            if !store.snapshot.isLive {
+                Section {
+                    Picker("Klima açılış derecesi", selection: $climateDefault) {
+                        ForEach(Array(GarageStore.climateTemperatureRange), id: \.self) { Text("\($0)°C").tag($0) }
+                    }
+                } footer: {
+                    Text("Klima açılırken bu derece kullanılır.")
+                }
             }
             Section {
                 LabeledContent("Veri kaynağı", value: store.snapshot.isLive ? "Canlı · Togg" : "Örnek veri")

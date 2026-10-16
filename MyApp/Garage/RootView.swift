@@ -39,10 +39,8 @@ private struct ThemedTabs: View {
     var body: some View {
         TabView {
             Tab("Araç", systemImage: "car.side.fill") { HomeView() }
-            // Klima kontrolleri yalnızca örnek veri üzerinde çalışır; canlı modda gizlenir.
-            if !store.snapshot.isLive {
-                Tab("Klima", systemImage: "fan.fill") { ClimateView() }
-            }
+            // Klima ekranı örnek ve canlı modda aynı sekmeden açılır.
+            Tab("Klima", systemImage: "fan.fill") { ClimateView() }
             Tab("Şarj", systemImage: "bolt.fill") { ChargeView() }
             Tab("Konum", systemImage: "location.fill") { LocationView() }
             Tab("Daha fazla", systemImage: "ellipsis") { MoreView() }

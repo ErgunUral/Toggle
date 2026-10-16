@@ -16,6 +16,9 @@ nonisolated struct VehicleSummary: Identifiable, Hashable, Sendable {
     let color: String?
     /// Araç listesindeki model yılı. VehicleInfo'daki `year` yanlış geldiğinden bu kullanılır.
     let year: String?
+    /// Android 1.0.13'ün de okuduğu ek alanlar; liste yanıtında yoksa nil.
+    let trimLevel: String?
+    let version: String?
     let ownerType: String?
     let keySharingEnabled: Bool?
     let manufacturer: String?
@@ -32,6 +35,15 @@ nonisolated struct TripInfo: Sendable {
     var updatedOn: Date?
 }
 
+/// Araç telemetrisinden okunan internet kullanım kotası.
+nonisolated struct InternetQuota: Sendable, Equatable {
+    let remainingGB: Double
+    let totalGB: Double
+
+    var usedGB: Double { totalGB - remainingGB }
+    var fractionRemaining: Double { remainingGB / totalGB }
+}
+
 /// VehicleInfo yanıtından okunan, salt okunur araç durumu.
 nonisolated struct VehicleState: Sendable {
     var vin: String
@@ -44,6 +56,7 @@ nonisolated struct VehicleState: Sendable {
     var inside: Double?
     var outside: Double?
     var auxBattery: Double?
+    var internetQuota: InternetQuota?
     var latitude: Double?
     var longitude: Double?
     var updatedOn: Date?
@@ -327,16 +340,16 @@ actor TogglService {
 
     /// İstek adresindeki VIN'i maskeler.
     private static func redact(_ path: String) -> String {
-        guard let range = path.range(of: "vin=") else { return path }
-        let vin = String(path[range.upperBound...].prefix(17))
-        return path.replacingOccurrences(of: vin, with: AppLog.maskVIN(vin))
+        // VIN hem sorgu parametresinde (`vin=`) hem de yolda geçebilir.
+        path.replacing(/[A-HJ-NPR-Z0-9]{17}/) { AppLog.maskVIN(String($0.output)) }
     }
 
-    private func get(_ path: String) async throws -> [String: Any] {
+    private func get(_ path: String, base: String? = nil, extraHeaders: [String: String] = [:]) async throws -> [String: Any] {
         let label = Self.redact(path)
-        var request = URLRequest(url: URL(string: apiBase + path)!)
+        var request = URLRequest(url: URL(string: (base ?? apiBase) + path)!)
         request.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "Authorization")
         request.setValue("TR", forHTTPHeaderField: "language")
+        for (name, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: name) }
 
         let started = ContinuousClock.now
         AppLog.debug(.network, "GET \(label)")
@@ -366,6 +379,20 @@ actor TogglService {
         return json
     }
 
+    /// Verilen anahtarlardan ilk dolu metin ya da sayı değerini döndürür (sayılar metne çevrilir).
+    private static func text(_ dict: [String: Any], _ keys: String...) -> String? {
+        for key in keys {
+            let value: String?
+            switch dict[key] {
+            case let string as String: value = string.trimmingCharacters(in: .whitespaces)
+            case let number as NSNumber: value = number.stringValue
+            default: value = nil
+            }
+            if let value, !value.isEmpty { return value }
+        }
+        return nil
+    }
+
     func vehicles() async throws -> [VehicleSummary] {
         let json = try await get("/vin-manage/api/v1/Vin/retrieveOwnerAndFriendVins")
         guard json["ownedVins"] != nil || json["friendVins"] != nil else {
@@ -393,9 +420,11 @@ actor TogglService {
                     name: dict["name"] as? String ?? "",
                     plate: dict["plateNumber"] as? String ?? "",
                     model: dict["model"] as? String ?? "T10X",
-                    edition: dict["edition"] as? String ?? "",
+                    edition: Self.text(dict, "edition", "trimLevel", "version") ?? "",
                     color: dict["color"] as? String,
-                    year: (dict["year"] as? String) ?? (dict["year"] as? Int).map(String.init),
+                    year: Self.text(dict, "year", "modelYear", "vehicleModelYear"),
+                    trimLevel: Self.text(dict, "trimLevel"),
+                    version: Self.text(dict, "version"),
                     ownerType: dict["ownerType"] as? String,
                     keySharingEnabled: dict["keysharingEnabled"] as? Bool,
                     manufacturer: dict["manufacture"] as? String
@@ -488,10 +517,357 @@ actor TogglService {
         state.brakeWarning = t["breakWarning"] as? Bool
         state.engineWarning = t["engineWarning"] as? Bool
         state.softwareVersion = at(json, "versionInfo", "version") as? String
+        state.internetQuota = Self.internetQuota(from: json)
         AppLog.debug(.parse, "Sürüş özetleri: güncel=\(state.currentTrip == nil ? "yok" : "var"), sonŞarj=\(state.lastChargeTrip == nil ? "yok" : "var"); şarj modu=\(state.chargeMode ?? "yok"); sürüş modu=\(state.driveMode ?? "yok"); batarya enerjisi=\(state.batteryEnergyKWh.map { String(format: "%.2f kWh", $0) } ?? "yok") (ham), renk=\(state.colorName ?? "yok")")
         Self.logFieldSummary(state)
         Self.logRawValues(json: json, telemetry: t)
         return state
+    }
+
+    /// APK'daki kota çözümleme davranışıyla uyumlu olarak kalan internet kotasını çıkarır.
+    /// `dataVolume` yüzde olarak gelirse 100'lük bir kota gibi tutulur; aksi halde
+    /// `dataUsage` veya `internetUsage` içindeki GB alanları kullanılır.
+    private static func internetQuota(from json: [String: Any]) -> InternetQuota? {
+        func number(_ value: Any?) -> Double? {
+            guard let value else { return nil }
+            if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
+                return number.doubleValue
+            }
+            if let string = value as? String {
+                return Double(string.replacingOccurrences(of: ",", with: "."))
+            }
+            return nil
+        }
+
+        if let remainingPercent = number(json["dataVolume"]), (0...100).contains(remainingPercent) {
+            return InternetQuota(remainingGB: remainingPercent, totalGB: 100)
+        }
+
+        let usage = (json["dataUsage"] as? [String: Any])
+            ?? (json["internetUsage"] as? [String: Any])
+        guard let usage else { return nil }
+
+        let total = number(usage["totalGb"]) ?? number(usage["dataLimitGb"])
+        let remaining = number(usage["remainingGb"])
+        let used = number(usage["usedGb"]) ?? number(usage["dataUsedGb"])
+        guard let total, total > 0 else { return nil }
+
+        let remainingGB = remaining ?? used.map { total - $0 }
+        guard let remainingGB, (0...total).contains(remainingGB) else { return nil }
+        return InternetQuota(remainingGB: remainingGB, totalGB: total)
+    }
+
+    /// DriveExperience özet bloklarını okur (`insightsDashboard`).
+    func insights(vin: String) async throws -> [ServerInsightBlock] {
+        let json = try await get("/info/api/v1/DriveExperience/\(vin)/insightsDashboard")
+        return ServerAnalytics.insights(from: json)
+    }
+
+    /// Sunucudaki sürüş ya da şarj kayıtlarının bir sayfasını okur (sayfa başına 20 kayıt).
+    func records(vin: String, isCharge: Bool, period: AnalyticsPeriod, offset: Int) async throws -> ServerRecordPage {
+        let overview = isCharge ? "chargingOverview" : "journeysOverview"
+        let json = try await get("/info/api/v1/DriveExperience/\(vin)/\(overview)\(period.rawValue)?limit=20&offset=\(offset)")
+        return ServerAnalytics.page(from: json, isCharge: isCharge)
+    }
+
+    func climateState(vin: String) async throws -> ClimateState {
+        guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil else {
+            throw ServiceError.badResponse("Geçersiz VIN.")
+        }
+
+        let payload = Self.protoString(field: 1, value: vin)
+        let response = try await grpcCall(
+            method: "GetClimateControlStatus",
+            payload: payload,
+            timeout: "30000m"
+        )
+        guard let outer = Self.protoBytesField(response, field: 1),
+              let inner = Self.protoBytesField(outer, field: 1) else {
+            throw ServiceError.badResponse("Klima durumu beklenen formatta değil.")
+        }
+
+        let active = Self.protoVarintField(inner, field: 1) == 1
+        var temperature: Double?
+        if let hvac = Self.protoBytesField(inner, field: 2),
+           let raw = Self.protoFloatField(hvac, field: 1),
+           raw.isFinite {
+            temperature = Double(raw)
+        }
+        return ClimateState(active: active, temperature: temperature)
+    }
+
+    func sendClimateCommand(
+        vin: String,
+        enabled: Bool,
+        temperature: Double
+    ) async throws -> ClimateCommandResult {
+        guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil else {
+            throw ServiceError.badResponse("Geçersiz VIN.")
+        }
+        guard temperature.isFinite, (16...30).contains(temperature) else {
+            throw ServiceError.badResponse("Hedef sıcaklık 16–30°C arasında olmalı.")
+        }
+
+        let hvac = Self.protoHVAC(enabled: enabled, temperature: enabled ? Float(temperature) : nil)
+        let payload = Self.protoString(field: 1, value: vin) + Self.protoBytes(field: 2, value: hvac)
+        let response = try await grpcCall(
+            method: "SendClimateControlCommand",
+            payload: payload,
+            timeout: "240000m"
+        )
+
+        let replies = Self.grpcFrames(response).compactMap { Self.protoCommandResult($0) }
+        guard let reply = replies.last else {
+            throw ServiceError.badResponse("Klima komutu yanıtı beklenen formatta değil.")
+        }
+        return reply
+    }
+
+    private func grpcCall(method: String, payload: Data, timeout: String) async throws -> Data {
+        var request = URLRequest(
+            url: URL(string: "https://tva-api.togg.cloud:9443/tr.com.togg.tva.remotecontrol.gRpcRemoteControlService/\\(method)")!
+        )
+        request.httpMethod = "POST"
+        request.httpBody = Self.grpcFrame(payload)
+        request.setValue("Bearer \\(try await accessToken())", forHTTPHeaderField: "Authorization")
+        request.setValue("application/grpc", forHTTPHeaderField: "Content-Type")
+        request.setValue("trailers", forHTTPHeaderField: "TE")
+        request.setValue(timeout, forHTTPHeaderField: "grpc-timeout")
+        request.setValue("identity", forHTTPHeaderField: "grpc-accept-encoding")
+        request.setValue("ios-garajim/1.0", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw ServiceError.http(status)
+        }
+        guard !data.isEmpty else {
+            throw ServiceError.badResponse("Klima servisi boş yanıt verdi.")
+        }
+        return data
+    }
+
+    private static func protoVarint(_ value: Int) -> Data {
+        var value = UInt64(value)
+        var result = Data()
+        repeat {
+            var byte = UInt8(value & 0x7F)
+            value >>= 7
+            if value != 0 { byte |= 0x80 }
+            result.append(byte)
+        } while value != 0
+        return result
+    }
+
+    private static func protoBytes(field: Int, value: Data) -> Data {
+        protoVarint((field << 3) | 2) + protoVarint(value.count) + value
+    }
+
+    private static func protoString(field: Int, value: String) -> Data {
+        protoBytes(field: field, value: Data(value.utf8))
+    }
+
+    private static func protoHVAC(enabled: Bool, temperature: Float?) -> Data {
+        var result = Data()
+        if enabled {
+            result.append(0x08)
+            result.append(0x01)
+        }
+        if let temperature {
+            result.append(0x15)
+            var value = temperature.bitPattern.littleEndian
+            withUnsafeBytes(of: &value) { result.append(contentsOf: $0) }
+        }
+        return result
+    }
+
+    private static func grpcFrame(_ payload: Data) -> Data {
+        var result = Data([0])
+        var length = UInt32(payload.count).bigEndian
+        withUnsafeBytes(of: &length) { result.append(contentsOf: $0) }
+        result.append(payload)
+        return result
+    }
+
+    private static func grpcFrames(_ data: Data) -> [Data] {
+        var result: [Data] = []
+        var offset = 0
+        while offset + 5 <= data.count {
+            guard data[offset] == 0 else { break }
+            let length = Int(data[offset + 1]) << 24
+                | Int(data[offset + 2]) << 16
+                | Int(data[offset + 3]) << 8
+                | Int(data[offset + 4])
+            offset += 5
+            guard length >= 0, length <= 1_048_576, offset + length <= data.count else { break }
+            result.append(data.subdata(in: offset..<(offset + length)))
+            offset += length
+        }
+        return result
+    }
+
+    private static func protoFields(_ data: Data) -> [(field: Int, wire: Int, value: Data)] {
+        var fields: [(Int, Int, Data)] = []
+        var index = 0
+
+        func readVarint() -> UInt64? {
+            var result: UInt64 = 0
+            for shift in stride(from: 0, through: 63, by: 7) {
+                guard index < data.count else { return nil }
+                let byte = data[index]
+                index += 1
+                result |= UInt64(byte & 0x7F) << UInt64(shift)
+                if byte & 0x80 == 0 { return result }
+            }
+            return nil
+        }
+
+        while index < data.count {
+            guard let tag = readVarint() else { break }
+            let field = Int(tag >> 3)
+            let wire = Int(tag & 0x07)
+            guard field > 0 else { break }
+
+            switch wire {
+            case 0:
+                guard let value = readVarint() else { return fields }
+                var encoded = Data()
+                var mutable = value
+                repeat {
+                    var byte = UInt8(mutable & 0x7F)
+                    mutable >>= 7
+                    if mutable != 0 { byte |= 0x80 }
+                    encoded.append(byte)
+                } while mutable != 0
+                fields.append((field, wire, encoded))
+            case 2:
+                guard let length = readVarint(), length <= 1_048_576 else { return fields }
+                let end = index + Int(length)
+                guard end <= data.count else { return fields }
+                fields.append((field, wire, data.subdata(in: index..<end)))
+                index = end
+            case 5:
+                guard index + 4 <= data.count else { return fields }
+                fields.append((field, wire, data.subdata(in: index..<(index + 4))))
+                index += 4
+            default:
+                return fields
+            }
+        }
+        return fields
+    }
+
+    private static func protoBytesField(_ data: Data, field: Int) -> Data? {
+        protoFields(data).last { $0.field == field && $0.wire == 2 }?.value
+    }
+
+    private static func protoVarintField(_ data: Data, field: Int) -> UInt64? {
+        guard let raw = protoFields(data).last(where: { $0.field == field && $0.wire == 0 })?.value else {
+            return nil
+        }
+        return raw.enumerated().reduce(UInt64(0)) { result, item in
+            result | (UInt64(item.element & 0x7F) << UInt64(item.offset * 7))
+        }
+    }
+
+    private static func protoFloatField(_ data: Data, field: Int) -> Float? {
+        guard let raw = protoFields(data).last(where: { $0.field == field && $0.wire == 5 })?.value,
+              raw.count == 4 else { return nil }
+        return raw.withUnsafeBytes { Float(bitPattern: UInt32(littleEndian: $0.load(as: UInt32.self))) }
+    }
+
+    private static func protoStringField(_ data: Data, field: Int) -> String? {
+        guard let raw = protoBytesField(data, field: field) else { return nil }
+        return String(data: raw, encoding: .utf8)
+    }
+
+    private static func protoCommandResult(_ data: Data) -> ClimateCommandResult? {
+        guard let status = protoStringField(data, field: 2), !status.isEmpty else { return nil }
+        return ClimateCommandResult(
+            requestID: protoStringField(data, field: 1),
+            status: status,
+            code: protoStringField(data, field: 3)
+        )
+    }
+
+    func accountNotifications() async throws -> [LiveNotification] {
+        let json = try await get(
+            "/integration/api/v1/Notifications/all",
+            base: "https://superapp-api.channels.togg.cloud",
+            extraHeaders: ["x-app-build-number": "663", "Accept": "application/json"]
+        )
+        return AccountPayload.items(json, preferredKeys: ["notifications", "notificationList"]).enumerated().map { index, item in
+            LiveNotification(
+                id: AccountPayload.text(item, "id", "notificationId", "uuid") ?? "notification-\\(index)",
+                title: AccountPayload.text(item, "title", "subject", "name") ?? "Bildirim",
+                detail: AccountPayload.text(item, "message", "description", "body", "content") ?? "",
+                date: AccountPayload.date(item, "createdAt", "createdOn", "date", "timestamp"),
+                symbol: AccountPayload.text(item, "icon", "symbol") ?? "bell.fill"
+            )
+        }
+    }
+
+    func serviceRecords() async throws -> [LiveServiceRecord] {
+        let json = try await get(
+            "/integration/api/v1/Tickets/Tur",
+            base: "https://superapp-api.channels.togg.cloud",
+            extraHeaders: ["x-app-build-number": "663", "Accept": "application/json"]
+        )
+        return AccountPayload.items(json, preferredKeys: ["tickets", "services", "records"]).enumerated().map { index, item in
+            LiveServiceRecord(
+                id: AccountPayload.text(item, "ticketId", "id", "number") ?? "service-\\(index)",
+                title: AccountPayload.text(item, "title", "subject", "type", "description") ?? "Servis kaydı",
+                place: AccountPayload.text(item, "dealerName", "serviceName", "location", "place") ?? "Servis",
+                date: AccountPayload.date(item, "createdAt", "createdOn", "date", "appointmentDate"),
+                status: AccountPayload.text(item, "status", "state", "ticketStatus")
+            )
+        }
+    }
+
+    func subscriptions() async throws -> [LiveSubscription] {
+        let json = try await get(
+            "/integration/api/v1/Package/Tur/subscriptions",
+            base: "https://superapp-api.channels.togg.cloud",
+            extraHeaders: ["x-app-build-number": "663", "Accept": "application/json"]
+        )
+        return AccountPayload.items(json, preferredKeys: ["subscriptions", "packages", "plans"]).enumerated().map { index, item in
+            let active = AccountPayload.bool(item, "isActive", "active", "enabled", "isSubscribed")
+                ?? (AccountPayload.text(item, "status", "state")?.lowercased() == "active")
+            return LiveSubscription(
+                id: AccountPayload.text(item, "id", "subscriptionId", "code") ?? "subscription-\\(index)",
+                title: AccountPayload.text(item, "name", "title", "packageName", "productName") ?? "Abonelik",
+                detail: AccountPayload.text(item, "description", "detail", "planName", "renewalDate") ?? "",
+                isActive: active
+            )
+        }
+    }
+
+    /// Henüz arayüzde kullanılmayan salt okunur uç noktaların yanıt yapısını günlüğe yazar.
+    /// Şema doğrulanmadığından yalnızca hata ayıklama derlemesinde çalışır; yanıt değerleri yazılmaz,
+    /// yalnızca anahtar yapısı yazılır.
+    func probeExtraEndpoints(for vehicle: VehicleSummary) async {
+        #if DEBUG
+        let vin = vehicle.vin
+        let tva = "/info/api/v1/DriveExperience/\(vin)"
+        let superApp = "https://superapp-api.channels.togg.cloud"
+        let appHeaders = ["x-app-build-number": "663", "Accept": "application/json"]
+        let probes: [(String, String, String?)] = [
+            ("özet", tva + "/insightsDashboard", nil),
+            ("sürüşler", tva + "/journeysOverviewMonthly?limit=20&offset=0", nil),
+            ("şarjlar", tva + "/chargingOverviewMonthly?limit=20&offset=0", nil),
+            ("bildirimler", "/integration/api/v1/Notifications/all", superApp),
+            ("servis", "/integration/api/v1/Tickets/Tur", superApp),
+            ("abonelikler", "/integration/api/v1/Package/Tur/subscriptions", superApp),
+        ]
+        for (name, path, base) in probes {
+            do {
+                let json = try await get(path, base: base, extraHeaders: base == nil ? [:] : appHeaders)
+                AppLog.info(.parse, "Keşif · \(name): \(AppLog.shape(json))")
+            } catch {
+                AppLog.warning(.parse, "Keşif · \(name) alınamadı: \(AppLog.describe(error))")
+            }
+        }
+        #endif
     }
 
     /// Birim ve biçim tespiti için ham değerleri yazar. Konum ve VIN içermez.
