@@ -1,0 +1,248 @@
+import SwiftUI
+import AuthenticationServices
+import CoreLocation
+
+/// Uygulamanın tek veri kaynağı. Giriş yapılmamışsa örnek veri, yapılmışsa
+/// Togg'dan salt okunur canlı veri gösterir. Araca komut göndermez.
+@MainActor @Observable
+final class GarageStore {
+    private static let colorKey = "vehicleColor"
+    private static let colorManualKey = "vehicleColorIsManual"
+
+    var snapshot = VehicleSnapshot()
+    var color: VehicleColor
+    /// Araçtan okunan renk; tanınmayan ya da okunamayan renk nil.
+    var vehicleColor: VehicleColor?
+    var isRefreshing = false
+    var isSignedIn = false
+    var message: String?
+    var vehicles: [VehicleSummary] = []
+    var selectedVIN: String?
+
+    let history = HistoryStore()
+
+    private let service = TogglService()
+    /// Kullanıcı rengi elle seçtiyse araçtan gelen renk onun üzerine yazılmaz.
+    private var isColorManual: Bool
+
+    init() {
+        let defaults = UserDefaults.standard
+        color = VehicleColor(rawValue: defaults.string(forKey: Self.colorKey) ?? "") ?? .blue
+        isColorManual = defaults.bool(forKey: Self.colorManualKey)
+    }
+
+    // MARK: Renk
+
+    /// Kullanıcının elle seçtiği renk.
+    func select(_ newColor: VehicleColor) {
+        isColorManual = true
+        UserDefaults.standard.set(true, forKey: Self.colorManualKey)
+        setColor(newColor)
+        AppLog.info(.app, "Renk elle seçildi: \(newColor.rawValue)")
+    }
+
+    /// Elle seçimi bırakıp araçtan okunan rengi kullanır.
+    func useVehicleColor() {
+        isColorManual = false
+        UserDefaults.standard.set(false, forKey: Self.colorManualKey)
+        if let vehicleColor { setColor(vehicleColor) }
+        AppLog.info(.app, "Araç rengi kullanılıyor: \(vehicleColor?.rawValue ?? "bilinmiyor")")
+    }
+
+    private func setColor(_ newColor: VehicleColor) {
+        color = newColor
+        UserDefaults.standard.set(newColor.rawValue, forKey: Self.colorKey)
+    }
+
+    // MARK: Oturum
+
+    /// Keychain'deki oturumu okur; oturum varsa canlı veriyi yükler.
+    func syncSignInState() async {
+        isSignedIn = await service.isSignedIn
+        AppLog.info(.app, "Oturum durumu: \(isSignedIn ? "açık (canlı mod)" : "kapalı (örnek mod)")")
+        if isSignedIn { await refresh() }
+    }
+
+    func signIn(using session: WebAuthenticationSession) async {
+        AppLog.info(.auth, "Giriş akışı başlatıldı")
+        message = nil
+        let login = await service.prepareLogin()
+        do {
+            let callback = try await session.authenticate(using: login.url, callbackURLScheme: "superapp")
+            try await service.completeLogin(callback: callback, state: login.state, verifier: login.verifier)
+            isSignedIn = true
+            AppLog.info(.auth, "Giriş başarılı; canlı veri yükleniyor")
+            await refresh()
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            AppLog.warning(.auth, "Giriş kullanıcı tarafından iptal edildi")
+            message = ServiceError.cancelled.localizedDescription
+        } catch {
+            AppLog.error(.auth, "Giriş başarısız: \(AppLog.describe(error))")
+            message = error.localizedDescription
+        }
+    }
+
+    func signOut() async {
+        AppLog.info(.auth, "Çıkış yapılıyor; örnek moda dönülüyor")
+        await service.signOut()
+        isSignedIn = false
+        vehicles = []
+        selectedVIN = nil
+        vehicleColor = nil
+        snapshot = VehicleSnapshot()
+        message = nil
+    }
+
+    // MARK: Veri
+
+    func refresh() async {
+        guard !isRefreshing else {
+            AppLog.debug(.refresh, "Yenileme atlandı: zaten sürüyor")
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        guard isSignedIn else {
+            // Örnek modda yalnızca "güncellendi" zamanını yeniler.
+            AppLog.debug(.refresh, "Örnek mod yenilemesi")
+            try? await Task.sleep(for: .milliseconds(900))
+            snapshot.updatedAt = .now
+            return
+        }
+
+        let started = ContinuousClock.now
+        AppLog.info(.refresh, "Canlı yenileme başladı")
+        do {
+            vehicles = try await service.vehicles()
+            if selectedVIN == nil || !vehicles.contains(where: { $0.vin == selectedVIN }) {
+                selectedVIN = vehicles.first?.vin
+                AppLog.info(.refresh, "Araç seçildi: \(selectedVIN.map(AppLog.maskVIN) ?? "yok") (toplam \(vehicles.count))")
+            }
+            guard let vehicle = vehicles.first(where: { $0.vin == selectedVIN }) else {
+                AppLog.warning(.refresh, "Hesapta araç bulunamadı")
+                message = "Hesabında araç bulunamadı."
+                return
+            }
+            apply(try await service.state(for: vehicle))
+            history.record(snapshot)
+            message = nil
+            AppLog.info(.refresh, "Canlı yenileme tamamlandı (\(AppLog.ms(since: started)))")
+        } catch ServiceError.sessionExpired {
+            AppLog.warning(.refresh, "Oturum süresi doldu (\(AppLog.ms(since: started))); çıkış yapılıyor")
+            await signOut()
+            message = ServiceError.sessionExpired.localizedDescription
+        } catch {
+            AppLog.error(.refresh, "Canlı yenileme başarısız (\(AppLog.ms(since: started))): \(AppLog.describe(error))")
+            message = error.localizedDescription
+        }
+    }
+
+    /// Canlı veriyi okunabilen alanlara yazar. Okunamayan alanlar nil kalır;
+    /// internet kotası ve kontroller için canlı kaynak olmadığından örnek kalır.
+    private func apply(_ live: VehicleState) {
+        var next = VehicleSnapshot()
+        next.isLive = true
+        next.name = live.name
+        next.model = live.model
+        next.edition = live.edition
+        next.vin = AppLog.maskVIN(live.vin)
+        next.battery = live.battery.map { $0 / 100 }
+        next.range = live.range
+        next.batteryEnergyKWh = live.batteryEnergyKWh
+        next.odometer = live.odometer
+        next.inside = live.inside
+        next.outside = live.outside
+        next.auxBattery = live.auxBattery.map { $0 / 100 }
+        next.tires = TirePressure(
+            frontLeft: live.tiresFrontPSI.0,
+            frontRight: live.tiresFrontPSI.1,
+            rearLeft: live.tiresRearPSI.0,
+            rearRight: live.tiresRearPSI.1
+        )
+        if let latitude = live.latitude, let longitude = live.longitude {
+            next.coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        } else {
+            next.coordinate = nil
+        }
+        next.address = nil
+        next.updatedAt = live.updatedOn
+
+        // Kalan enerji / doluluk = kullanılabilir kapasite. Farklı doluluklarda aynı kalmalıdır;
+        // kalmıyorsa `batteryTotalEnergyValue` kalan enerji değil kapasitedir.
+        let capacity = next.usableCapacityKWh
+
+        if let trip = live.currentTrip, let sinceCharge = live.lastChargeTrip {
+            next.currentTrip = Self.stats(from: trip, capacityKWh: capacity, title: "Güncel sürüş")
+            next.sinceCharge = Self.stats(from: sinceCharge, capacityKWh: capacity, title: "Son şarjdan beri")
+            next.tripsAreLive = true
+        }
+        next.isCharging = live.chargeMode.map(Self.isCharging)
+        next.driveMode = live.driveMode.map(Self.driveModeText)
+        AppLog.info(.parse, "Enerji: kalan=\(live.batteryEnergyKWh.map { String(format: "%.2f", $0) } ?? "yok") kWh, doluluk=\(live.battery.map { String(format: "%.0f", $0) } ?? "yok")% → ima edilen kapasite=\(capacity.map { String(format: "%.1f", $0) } ?? "yok") kWh, araç menzili=\(live.range.map { String(format: "%.0f", $0) } ?? "yok") km, gerçekçi menzil=\(next.realisticRange.map { String(format: "%.0f", $0) } ?? "yok") km (tüketim=\(next.sinceCharge.average.map { String(format: "%.1f", $0) } ?? "yok") kWh/100 km)")
+        snapshot = next
+
+        applyVehicleColor(named: live.colorName)
+        AppLog.debug(.refresh, "Anlık görüntü canlı veriyle güncellendi (sürüş özeti canlı=\(next.tripsAreLive), şarj oluyor=\(next.isCharging.map(String.init(describing:)) ?? "bilinmiyor"))")
+    }
+
+    /// Araçtan gelen rengi okur; kullanıcı elle seçmediyse uygular.
+    private func applyVehicleColor(named name: String?) {
+        guard let name else {
+            vehicleColor = nil
+            AppLog.debug(.parse, "Araç rengi: yanıtta yok")
+            return
+        }
+        guard let parsed = VehicleColor(apiName: name) else {
+            vehicleColor = nil
+            AppLog.warning(.parse, "Araç rengi tanınmadı: '\(name)' (bilinen renkler: \(VehicleColor.allCases.map(\.rawValue).joined(separator: ",")))")
+            return
+        }
+        vehicleColor = parsed
+        if isColorManual {
+            AppLog.debug(.parse, "Araç rengi=\(parsed.rawValue); kullanıcı elle seçtiği için değişmedi")
+        } else if parsed != color {
+            AppLog.info(.parse, "Araç rengi uygulandı: \(color.rawValue) → \(parsed.rawValue)")
+            setColor(parsed)
+        }
+    }
+
+    /// Enerji ve batarya tüketimi, ortalama tüketimden ve kullanılabilir kapasiteden tahmin edilir.
+    private static func stats(from trip: TripInfo, capacityKWh: Double?, title: String) -> TripStats {
+        let energy = trip.averageConsumption.map { trip.distanceKm * $0 / 100 }
+        let percent = energy.flatMap { energy in capacityKWh.flatMap { $0 > 0 ? energy / $0 * 100 : nil } }
+        var parts: [String] = []
+        if let minutes = trip.durationMinutes { parts.append("\(minutes / 60) sa \(minutes % 60) dk") }
+        if let updatedOn = trip.updatedOn { parts.append(updatedOn.shortDateTimeText) }
+        return TripStats(
+            distance: trip.distanceKm,
+            average: trip.averageConsumption,
+            energy: energy,
+            batteryPercent: percent,
+            note: parts.isEmpty ? title : parts.joined(separator: " · ")
+        )
+    }
+
+    /// APK'daki desenle aynı: şarj modu bir AC/DC şarj değeri ise şarj oluyordur.
+    private static func isCharging(_ mode: String) -> Bool {
+        mode.range(
+            of: "^(CHRGMODE_CHARGE|(CHARGEMODE_)?(AC_CHARGING|DC_CHARGING|CHARGING_AC|CHARGING_DC|CHARGING))$",
+            options: .regularExpression
+        ) != nil
+    }
+
+    /// DRIVEMODE_COMFORT → Comfort
+    private static func driveModeText(_ mode: String) -> String {
+        mode.replacingOccurrences(of: "DRIVEMODE_", with: "").capitalized
+    }
+
+    // MARK: Örnek kontroller (canlı modda kapalıdır; araca komut göndermez)
+
+    func toggleLock() { snapshot.doorsLocked.toggle() }
+    func toggleTrunk() { snapshot.trunkOpen.toggle() }
+    func toggleClimate() { snapshot.climateOn.toggle() }
+
+    func adjustTemperature(by delta: Int) {
+        snapshot.targetTemperature = min(30, max(16, snapshot.targetTemperature + delta))
+    }
+}
