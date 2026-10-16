@@ -6,6 +6,13 @@ struct ChargeView: View {
     @State private var target = 80.0
     @State private var capacity = 88.5
     @State private var price = 10.0
+    /// Kullanıcı kapasiteyi elle değiştirdiyse araçtan hesaplanan değer üzerine yazılmaz.
+    @State private var capacityEdited = false
+
+    /// Canlı veriden çıkarılan kullanılabilir kapasite; örnek modda nil.
+    private var vehicleCapacity: Double? {
+        store.snapshot.isLive ? store.snapshot.usableCapacityKWh : nil
+    }
 
     private var chargeStatusText: String {
         switch store.snapshot.isCharging {
@@ -36,6 +43,11 @@ struct ChargeView: View {
             }
             .background { AppBackground() }
             .navigationTitle("Şarj")
+            .task(id: vehicleCapacity) {
+                if let vehicleCapacity, !capacityEdited {
+                    capacity = (vehicleCapacity * 10).rounded() / 10
+                }
+            }
         }
     }
 
@@ -64,7 +76,7 @@ struct ChargeView: View {
                 slider("Başlangıç", value: $start, range: 0...99)
                 slider("Hedef", value: $target, range: 1...100)
                 LabeledContent("Kapasite (kWh)") {
-                    TextField("kWh", value: $capacity, format: .number)
+                    TextField("kWh", value: Binding(get: { capacity }, set: { capacity = $0; capacityEdited = true }), format: .number)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                         #if os(iOS)
@@ -90,7 +102,9 @@ struct ChargeView: View {
                         StatTile(title: "DC · 150 kW", value: dcMinutes.decimal(), unit: "dk")
                     }
                 }
-                Text("Kapasite ve fiyat varsayımdır; şarj kayıpları dahil değildir. Araçta şarj başlatmaz.")
+                Text(vehicleCapacity != nil && !capacityEdited
+                     ? "Kapasite araç verisinden tahmin edilir; fiyat varsayımdır. Şarj kayıpları dahil değildir. Araçta şarj başlatmaz."
+                     : "Kapasite ve fiyat varsayımdır; şarj kayıpları dahil değildir. Araçta şarj başlatmaz.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

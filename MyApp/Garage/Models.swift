@@ -39,19 +39,6 @@ enum VehicleColor: String, CaseIterable, Identifiable {
         }
     }
 
-    var swatch: Color {
-        switch self {
-        case .blue: Color(red: 0.20, green: 0.42, blue: 0.70)
-        case .black, .obsidian_black: Color(white: 0.10)
-        case .white: Color(white: 0.93)
-        case .new_white, .obsidian_new_white: Color(red: 0.96, green: 0.95, blue: 0.92)
-        case .grey, .obsidian_grey: Color(white: 0.52)
-        case .beige: Color(red: 0.80, green: 0.73, blue: 0.62)
-        case .red, .obsidian_red: Color(red: 0.70, green: 0.14, blue: 0.16)
-        case .green, .obsidian_green: Color(red: 0.16, green: 0.40, blue: 0.30)
-        }
-    }
-
     /// 360° görsel yalnızca bazı renkler için var.
     var hasSpin: Bool {
         [.blue, .black, .obsidian_green, .obsidian_grey, .obsidian_red].contains(self)
@@ -107,6 +94,8 @@ struct VehicleSnapshot {
     var edition = "V2 Uzun Menzil"
     var year = 2025
     var vin = "TRZ••••••••••1234"
+    /// nil: plaka bilinmiyor (örnek modda da yok).
+    var plate: String?
 
     var battery: Double? = 0.78
     var range: Double? = 365

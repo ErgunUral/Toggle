@@ -180,24 +180,6 @@ struct SettingsView: View {
                     ForEach(AppTheme.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
-                Picker("Araç rengi", selection: Binding(get: { store.color }, set: { store.select($0) })) {
-                    ForEach(VehicleColor.allCases) { option in
-                        Label {
-                            Text(option.title)
-                        } icon: {
-                            Image(systemName: "circle.fill").foregroundStyle(option.swatch)
-                        }
-                        .tag(option)
-                    }
-                }
-                if let vehicleColor = store.vehicleColor {
-                    Button {
-                        store.useVehicleColor()
-                    } label: {
-                        Label("Araç rengini kullan: \(vehicleColor.title)", systemImage: "car.side")
-                    }
-                    .disabled(store.color == vehicleColor)
-                }
             }
             Section {
                 LabeledContent("Veri kaynağı", value: store.snapshot.isLive ? "Canlı · Togg" : "Örnek veri")

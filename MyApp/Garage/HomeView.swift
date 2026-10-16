@@ -142,7 +142,6 @@ private struct HeroSection: View {
                 }
             }
 
-            colorPicker
         }
         .task(id: autoSpin) {
             while autoSpin {
@@ -174,37 +173,6 @@ private struct HeroSection: View {
             .onEnded { _ in dragStartFrame = nil }
     }
 
-    private var colorPicker: some View {
-        VStack(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(VehicleColor.allCases) { option in
-                        Button { store.select(option) } label: {
-                            Circle()
-                                .fill(option.swatch)
-                                .frame(width: 28, height: 28)
-                                .overlay { Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1) }
-                                .padding(4)
-                                .overlay {
-                                    if option == store.color {
-                                        Circle().strokeBorder(Color.accentColor, lineWidth: 2.5)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(option.title)
-                        .accessibilityAddTraits(option == store.color ? .isSelected : [])
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-            }
-            .scrollClipDisabled()
-            Text(color.title)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
 }
 
 // MARK: - Hızlı işlemler
@@ -320,6 +288,10 @@ private struct VehicleStatusCard: View {
                 HStack(alignment: .top, spacing: 16) {
                     StatTile(title: "Kilometre", value: snapshot.odometer.decimal(), unit: "km")
                     StatTile(title: "Sürüş modu", value: snapshot.driveMode ?? "—")
+                }
+                HStack(alignment: .top, spacing: 16) {
+                    StatTile(title: "Plaka", value: snapshot.plate ?? "—")
+                    StatTile(title: "VIN", value: snapshot.vin)
                 }
                 Divider()
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {

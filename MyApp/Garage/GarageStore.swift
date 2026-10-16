@@ -7,12 +7,10 @@ import CoreLocation
 @MainActor @Observable
 final class GarageStore {
     private static let colorKey = "vehicleColor"
-    private static let colorManualKey = "vehicleColorIsManual"
 
     var snapshot = VehicleSnapshot()
+    /// Araçtan okunan son renk; henüz okunmadıysa son kaydedilen ya da mavi.
     var color: VehicleColor
-    /// Araçtan okunan renk; tanınmayan ya da okunamayan renk nil.
-    var vehicleColor: VehicleColor?
     var isRefreshing = false
     var isSignedIn = false
     var message: String?
@@ -22,32 +20,15 @@ final class GarageStore {
     let history = HistoryStore()
 
     private let service = TogglService.shared
-    /// Kullanıcı rengi elle seçtiyse araçtan gelen renk onun üzerine yazılmaz.
-    private var isColorManual: Bool
 
     init() {
         let defaults = UserDefaults.standard
         color = VehicleColor(rawValue: defaults.string(forKey: Self.colorKey) ?? "") ?? .blue
-        isColorManual = defaults.bool(forKey: Self.colorManualKey)
+        // Elle renk seçimi kaldırıldı; eski ayar kalmasın.
+        defaults.removeObject(forKey: "vehicleColorIsManual")
     }
 
     // MARK: Renk
-
-    /// Kullanıcının elle seçtiği renk.
-    func select(_ newColor: VehicleColor) {
-        isColorManual = true
-        UserDefaults.standard.set(true, forKey: Self.colorManualKey)
-        setColor(newColor)
-        AppLog.info(.app, "Renk elle seçildi: \(newColor.rawValue)")
-    }
-
-    /// Elle seçimi bırakıp araçtan okunan rengi kullanır.
-    func useVehicleColor() {
-        isColorManual = false
-        UserDefaults.standard.set(false, forKey: Self.colorManualKey)
-        if let vehicleColor { setColor(vehicleColor) }
-        AppLog.info(.app, "Araç rengi kullanılıyor: \(vehicleColor?.rawValue ?? "bilinmiyor")")
-    }
 
     private func setColor(_ newColor: VehicleColor) {
         color = newColor
@@ -88,7 +69,6 @@ final class GarageStore {
         isSignedIn = false
         vehicles = []
         selectedVIN = nil
-        vehicleColor = nil
         snapshot = VehicleSnapshot()
         // Başka hesapla girilirse eski aracın ölçümleri yeni grafiklere karışmasın.
         history.clear()
@@ -135,6 +115,7 @@ final class GarageStore {
                 return
             }
             apply(try await service.state(for: vehicle))
+            snapshot.plate = vehicle.plate.isEmpty ? nil : vehicle.plate
             history.record(snapshot)
             message = nil
             AppLog.info(.refresh, "Canlı yenileme tamamlandı (\(AppLog.ms(since: started)))")
@@ -201,22 +182,17 @@ final class GarageStore {
         AppLog.debug(.refresh, "Anlık görüntü canlı veriyle güncellendi (sürüş özeti canlı=\(next.tripsAreLive), şarj oluyor=\(next.isCharging.map(String.init(describing:)) ?? "bilinmiyor"))")
     }
 
-    /// Araçtan gelen rengi okur; kullanıcı elle seçmediyse uygular.
+    /// Araçtan gelen rengi okur ve uygular; okunamayan ya da tanınmayan renkte son renk korunur.
     private func applyVehicleColor(named name: String?) {
         guard let name else {
-            vehicleColor = nil
             AppLog.debug(.parse, "Araç rengi: yanıtta yok")
             return
         }
         guard let parsed = VehicleColor(apiName: name) else {
-            vehicleColor = nil
             AppLog.warning(.parse, "Araç rengi tanınmadı: '\(name)' (bilinen renkler: \(VehicleColor.allCases.map(\.rawValue).joined(separator: ",")))")
             return
         }
-        vehicleColor = parsed
-        if isColorManual {
-            AppLog.debug(.parse, "Araç rengi=\(parsed.rawValue); kullanıcı elle seçtiği için değişmedi")
-        } else if parsed != color {
+        if parsed != color {
             AppLog.info(.parse, "Araç rengi uygulandı: \(color.rawValue) → \(parsed.rawValue)")
             setColor(parsed)
         }

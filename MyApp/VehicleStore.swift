@@ -11,6 +11,9 @@ nonisolated struct VehicleSummary: Identifiable, Hashable, Sendable {
     let plate: String
     let model: String
     let edition: String
+    /// Araç listesindeki renk adı. VehicleInfo'daki `color` ile çeliştiğinde (BLUE ↔ Grey)
+    /// liste doğru çıktığından renk için birincil kaynaktır.
+    let color: String?
     var id: String { vin }
 }
 
@@ -363,6 +366,7 @@ actor TogglService {
             for entry in entries {
                 let dict = entry as? [String: Any] ?? ["vin": "\(entry)"]
                 let vin = (dict["vin"] as? String) ?? (dict["vinNumber"] as? String) ?? ""
+                AppLog.debug(.parse, "\(key): liste rengi=\(dict["color"] ?? "yok"), model=\(dict["model"] ?? "yok"), yıl=\(dict["year"] ?? "yok")")
                 guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil,
                       seen.insert(vin).inserted else {
                     skipped += 1
@@ -374,7 +378,8 @@ actor TogglService {
                     name: dict["name"] as? String ?? "",
                     plate: dict["plateNumber"] as? String ?? "",
                     model: dict["model"] as? String ?? "T10X",
-                    edition: dict["edition"] as? String ?? ""
+                    edition: dict["edition"] as? String ?? "",
+                    color: dict["color"] as? String
                 ))
             }
         }
@@ -449,7 +454,8 @@ actor TogglService {
         state.currentTrip = trip("currentTrip")
         state.lastChargeTrip = trip("lastChargeTrip")
         state.batteryEnergyKWh = num(at(t, "battery", "content", "batteryTotalEnergy", "batteryTotalEnergyValue"))
-        state.colorName = json["color"] as? String
+        // Liste rengi öncelikli; VehicleInfo'daki renk yanlış olabiliyor.
+        state.colorName = vehicle.color ?? (json["color"] as? String)
         state.chargeMode = at(t, "obcState", "content", "chargeMode", "chargeModeEnumValue") as? String
         state.driveMode = at(t, "driveMode", "content", "driveModeState", "driveMode") as? String
         AppLog.debug(.parse, "Sürüş özetleri: güncel=\(state.currentTrip == nil ? "yok" : "var"), sonŞarj=\(state.lastChargeTrip == nil ? "yok" : "var"); şarj modu=\(state.chargeMode ?? "yok"); sürüş modu=\(state.driveMode ?? "yok"); batarya enerjisi=\(state.batteryEnergyKWh.map { String(format: "%.2f kWh", $0) } ?? "yok") (ham), renk=\(state.colorName ?? "yok")")

@@ -3,6 +3,8 @@ import MapKit
 
 struct LocationView: View {
     @Environment(GarageStore.self) private var store
+    /// Canlı konumun ters coğrafi kodlamayla bulunan adresi.
+    @State private var resolvedAddress: String?
 
     var body: some View {
         let snapshot = store.snapshot
@@ -31,12 +33,21 @@ struct LocationView: View {
         }
         // Konum değişince harita yeni konumdan yeniden başlar.
         .id("\(coordinate.latitude),\(coordinate.longitude)")
+        .task(id: "\(coordinate.latitude),\(coordinate.longitude)") {
+            guard snapshot.address == nil else { return }
+            resolvedAddress = nil
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            guard let request = MKReverseGeocodingRequest(location: location) else { return }
+            // Adres bulunamazsa koordinat gösterilmeye devam eder.
+            let item = try? await request.mapItems.first
+            resolvedAddress = item?.address?.shortAddress ?? item?.name
+        }
         .mapStyle(.standard(elevation: .realistic))
         .ignoresSafeArea(edges: .top)
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {
                 Label(
-                    snapshot.address ?? "\(coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(coordinate.longitude.formatted(.number.precision(.fractionLength(5))))",
+                    snapshot.address ?? resolvedAddress ?? "\(coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(coordinate.longitude.formatted(.number.precision(.fractionLength(5))))",
                     systemImage: "mappin.and.ellipse"
                 )
                 .font(.headline)
