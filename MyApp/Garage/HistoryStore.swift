@@ -104,6 +104,19 @@ final class HistoryStore {
         return points.filter { $0.date >= start && $0.battery != nil }
     }
 
+    /// Son `days` günde biten geziler, en yeni başta.
+    func trips(lastDays days: Int, now: Date = .now) -> [DerivedTrip] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return TripDeriver.trips(from: points)
+            .filter { $0.end >= start }
+            .sorted { $0.start > $1.start }
+    }
+
+    /// İki zaman arasındaki kayıtlar, eskiden yeniye.
+    func points(from start: Date, to end: Date) -> [HistoryPoint] {
+        points.filter { $0.date >= start && $0.date <= end }.sorted { $0.date < $1.date }
+    }
+
     // MARK: Dosya
 
     private func load() {
