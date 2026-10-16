@@ -37,12 +37,23 @@ nonisolated struct DerivedTrip: Identifiable, Sendable {
     }
 }
 
+/// Bir gezinin ortalama dış sıcaklığı ve tüketimi.
+nonisolated struct TemperatureConsumptionPoint: Identifiable, Sendable {
+    let id: Date
+    /// °C
+    let temperature: Double
+    /// kWh/100 km
+    let consumption: Double
+}
+
 nonisolated enum TripDeriver {
     /// Ardışık iki kayıt arası bundan uzunsa aradaki kilometre bir geziye yazılmaz.
     static let maximumGap: TimeInterval = 30 * 60
     /// Bundan kısa kilometre farkı gezi sayılmaz (sensör gürültüsü).
     static let minimumTripDistanceKm = 0.5
     static let minimumDistanceForConsumptionKm = 5.0
+    /// Sıcaklık–tüketim eğilimi için gezilerin sıcaklıkları arasında aranan en az fark (°C).
+    static let minimumTemperatureSpread = 3.0
 
     /// Kilometre sayacı artan ardışık kayıtları bir gezide toplar. Sayaç değişmeyen, sayacı olmayan
     /// ya da `maximumGap`'ten uzun aralıklar geziyi bitirir.
@@ -80,6 +91,32 @@ nonisolated enum TripDeriver {
         }
         flush()
         return result
+    }
+
+    /// Hem dış sıcaklığı hem tüketimi bilinen gezilerin noktaları.
+    static func temperatureConsumptionPoints(of trips: [DerivedTrip], capacityKWh: Double?) -> [TemperatureConsumptionPoint] {
+        trips.compactMap { trip in
+            guard let temperature = trip.averageOutsideTemp,
+                  let consumption = trip.consumption(capacityKWh: capacityKWh) else { return nil }
+            return TemperatureConsumptionPoint(id: trip.start, temperature: temperature, consumption: consumption)
+        }
+    }
+
+    /// En küçük kareler doğrusu (tüketim = eğim × sıcaklık + sabit). Anlamlı bir eğilim için en az
+    /// 3 nokta ve en az `minimumTemperatureSpread` °C sıcaklık yayılımı gerekir; yoksa nil.
+    static func consumptionTrend(of points: [TemperatureConsumptionPoint]) -> (slope: Double, intercept: Double)? {
+        guard points.count >= 3,
+              let low = points.map(\.temperature).min(),
+              let high = points.map(\.temperature).max(),
+              high - low >= minimumTemperatureSpread else { return nil }
+        let count = Double(points.count)
+        let meanX = points.reduce(0) { $0 + $1.temperature } / count
+        let meanY = points.reduce(0) { $0 + $1.consumption } / count
+        let sxx = points.reduce(0) { $0 + ($1.temperature - meanX) * ($1.temperature - meanX) }
+        let sxy = points.reduce(0) { $0 + ($1.temperature - meanX) * ($1.consumption - meanY) }
+        guard sxx > 0 else { return nil }
+        let slope = sxy / sxx
+        return (slope, meanY - slope * meanX)
     }
 
     /// Geziler arası ağırlıklı ortalama tüketim (kWh/100 km); hesaplanabilen gezi yoksa nil.

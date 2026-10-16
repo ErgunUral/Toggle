@@ -73,6 +73,7 @@ struct JourneyView: View {
             )
             batteryChart(batteryPoints)
             summary(trips: trips, distances: distances, recordCount: history.points.count, capacity: capacity)
+            temperatureChart(TripDeriver.temperatureConsumptionPoints(of: trips, capacityKWh: capacity))
             tripList(trips, capacity: capacity)
             VStack(spacing: 12) {
                 SectionTitle("Şarj oturumları")
@@ -104,6 +105,50 @@ struct JourneyView: View {
             }
         }
         .glassCard()
+    }
+
+    // MARK: Sıcaklık – tüketim
+
+    /// Her nokta bir gezidir. Üç gezi yoksa grafik gösterilmez.
+    @ViewBuilder private func temperatureChart(_ points: [TemperatureConsumptionPoint]) -> some View {
+        if points.count >= 3 {
+            let trend = TripDeriver.consumptionTrend(of: points)
+            let temperatures = points.map(\.temperature)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Sıcaklığa göre tüketim").font(.headline)
+                Chart {
+                    ForEach(points) { point in
+                        PointMark(
+                            x: .value("Sıcaklık", point.temperature),
+                            y: .value("Tüketim", point.consumption)
+                        )
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    if let trend, let low = temperatures.min(), let high = temperatures.max() {
+                        LineMark(x: .value("Sıcaklık", low), y: .value("Tüketim", trend.slope * low + trend.intercept), series: .value("Eğilim", "Eğilim"))
+                        LineMark(x: .value("Sıcaklık", high), y: .value("Tüketim", trend.slope * high + trend.intercept), series: .value("Eğilim", "Eğilim"))
+                            .foregroundStyle(Color.accentColor.opacity(0.5))
+                    }
+                }
+                .chartXAxisLabel("°C")
+                .chartYAxisLabel("kWh/100 km")
+                .chartXScale(domain: .automatic(includesZero: false))
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(height: 200)
+                if let trend {
+                    // Eğim negatifse soğudukça tüketim artıyor demektir.
+                    let change = (-trend.slope * 10).formatted(.number.precision(.fractionLength(1)).sign(strategy: .always()))
+                    Text("Eğilim: sıcaklık 10 °C düştüğünde tüketim yaklaşık \(change) kWh/100 km değişiyor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Eğilim çizgisi için gezilerin sıcaklıkları arasında en az \(Int(TripDeriver.minimumTemperatureSpread)) °C fark gerekir.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .glassCard()
+        }
     }
 
     // MARK: Gezi listesi

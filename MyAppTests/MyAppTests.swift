@@ -120,6 +120,55 @@ struct TripDerivationTests {
     }
 }
 
+// MARK: - Sıcaklık – tüketim eğilimi
+
+struct ConsumptionTrendTests {
+    private func sample(_ temperature: Double, _ consumption: Double, id: Double = 0) -> TemperatureConsumptionPoint {
+        TemperatureConsumptionPoint(id: t0.addingTimeInterval(id), temperature: temperature, consumption: consumption)
+    }
+
+    @Test func exactLineIsRecovered() throws {
+        // tüketim = −0,5 × sıcaklık + 25
+        let points = [sample(0, 25, id: 1), sample(10, 20, id: 2), sample(20, 15, id: 3), sample(30, 10, id: 4)]
+        let trend = try #require(TripDeriver.consumptionTrend(of: points))
+        #expect(abs(trend.slope + 0.5) < 1e-9)
+        #expect(abs(trend.intercept - 25) < 1e-9)
+    }
+
+    @Test func needsThreePoints() {
+        #expect(TripDeriver.consumptionTrend(of: [sample(0, 25, id: 1), sample(20, 15, id: 2)]) == nil)
+    }
+
+    @Test func needsTemperatureSpread() {
+        // 2 °C yayılım, eşik 3 °C.
+        let points = [sample(10, 20, id: 1), sample(11, 19, id: 2), sample(12, 21, id: 3)]
+        #expect(TripDeriver.consumptionTrend(of: points) == nil)
+    }
+
+    @Test func pointsSkipTripsWithoutTemperatureOrConsumption() {
+        func trip(_ start: Double, km: Double, used: Double, temp: Double?) -> DerivedTrip {
+            DerivedTrip(
+                start: t0.addingTimeInterval(start * 60),
+                end: t0.addingTimeInterval((start + 30) * 60),
+                distanceKm: km,
+                startBattery: 0.80,
+                endBattery: 0.80 - used,
+                averageOutsideTemp: temp
+            )
+        }
+        let trips = [
+            trip(0, km: 50, used: 0.10, temp: 8),    // geçerli
+            trip(100, km: 50, used: 0.10, temp: nil), // sıcaklık yok
+            trip(200, km: 3, used: 0.05, temp: 8),    // çok kısa: tüketim yok
+        ]
+        let points = TripDeriver.temperatureConsumptionPoints(of: trips, capacityKWh: 82.7)
+        #expect(points.count == 1)
+        // %10 × 82,7 = 8,27 kWh; 50 km → 16,54 kWh/100 km
+        #expect(abs((points.first?.consumption ?? 0) - 16.54) < 1e-9)
+        #expect(points.first?.temperature == 8)
+    }
+}
+
 // MARK: - Şarj oturumu türetme
 
 struct ChargeDerivationTests {
