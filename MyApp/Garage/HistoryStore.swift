@@ -112,6 +112,14 @@ final class HistoryStore {
             .sorted { $0.start > $1.start }
     }
 
+    /// Son `days` günde biten şarj oturumları, en yeni başta.
+    func chargeSessions(lastDays days: Int, now: Date = .now) -> [DerivedChargeSession] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return ChargeDeriver.sessions(from: points)
+            .filter { $0.end >= start }
+            .sorted { $0.start > $1.start }
+    }
+
     /// İki zaman arasındaki kayıtlar, eskiden yeniye.
     func points(from start: Date, to end: Date) -> [HistoryPoint] {
         points.filter { $0.date >= start && $0.date <= end }.sorted { $0.date < $1.date }

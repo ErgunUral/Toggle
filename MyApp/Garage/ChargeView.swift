@@ -35,8 +35,9 @@ struct ChargeView: View {
                 VStack(spacing: 22) {
                     statusCard
                     planner
-                    // Şarj geçmişi için canlı kaynak yok; canlı modda örnek gösterilmez.
-                    if !store.snapshot.isLive { sessions }
+                    // Şarj geçmişi için canlı kaynak yok; canlı modda örnek yerine bu cihazdaki
+                    // kayıtlardan türetilen oturumlar gösterilir.
+                    if store.snapshot.isLive { liveSessions } else { sessions }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 32)
@@ -109,6 +110,16 @@ struct ChargeView: View {
                     .foregroundStyle(.secondary)
             }
             .glassCard()
+        }
+    }
+
+    private var liveSessions: some View {
+        VStack(spacing: 12) {
+            SectionTitle("Son şarjlar")
+            ChargeSessionList(
+                sessions: Array(store.history.chargeSessions(lastDays: 90).prefix(5)),
+                capacityKWh: vehicleCapacity
+            )
         }
     }
 

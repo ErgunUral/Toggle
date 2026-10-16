@@ -47,6 +47,7 @@ struct JourneyView: View {
         let distances = history.dailyDistances(days: days)
         let batteryPoints = history.batteryPoints(lastDays: days)
         let trips = history.trips(lastDays: days)
+        let charges = history.chargeSessions(lastDays: days)
 
         if history.points.count < 2 {
             VStack(alignment: .leading, spacing: 8) {
@@ -73,6 +74,10 @@ struct JourneyView: View {
             batteryChart(batteryPoints)
             summary(trips: trips, distances: distances, recordCount: history.points.count, capacity: capacity)
             tripList(trips, capacity: capacity)
+            VStack(spacing: 12) {
+                SectionTitle("Şarj oturumları")
+                ChargeSessionList(sessions: charges, capacityKWh: capacity)
+            }
         }
     }
 

@@ -17,7 +17,8 @@ private func point(
     _ minutes: Double,
     odo: Double?,
     battery: Double? = nil,
-    temp: Double? = nil
+    temp: Double? = nil,
+    charging: Bool? = nil
 ) -> HistoryPoint {
     HistoryPoint(
         date: t0.addingTimeInterval(minutes * 60),
@@ -25,7 +26,7 @@ private func point(
         rangeKm: nil,
         odometerKm: odo,
         outsideTemp: temp,
-        isCharging: nil
+        isCharging: charging
     )
 }
 
@@ -116,6 +117,127 @@ struct TripDerivationTests {
         #expect(average != nil)
         #expect(abs((average ?? 0) - 33.08) < 0.001)
         #expect(TripDeriver.averageConsumption(of: [], capacityKWh: 82.7) == nil)
+    }
+}
+
+// MARK: - Şarj oturumu türetme
+
+struct ChargeDerivationTests {
+    /// Araç yerinde (odometre sabit), 15 dakikada %50 → %66.
+    private let fastCharge = [
+        point(0, odo: 500, battery: 0.50),
+        point(5, odo: 500, battery: 0.55),
+        point(10, odo: 500, battery: 0.60),
+        point(15, odo: 500, battery: 0.66),
+    ]
+
+    @Test func detectsContinuousSession() throws {
+        let sessions = ChargeDeriver.sessions(from: fastCharge)
+        let session = try #require(sessions.first)
+        #expect(sessions.count == 1)
+        #expect(!session.isApproximate)
+        #expect(session.startBattery == 0.50)
+        #expect(session.endBattery == 0.66)
+        #expect(session.duration == 15 * 60)
+        #expect(abs(session.gainPercent - 16) < 1e-9)
+    }
+
+    @Test func energyAndPowerUseCapacity() throws {
+        let session = try #require(ChargeDeriver.sessions(from: fastCharge).first)
+        // %16 × 82,7 kWh = 13,232 kWh; 15 dk → 52,9 kW (DC)
+        let energy = try #require(session.energyKWh(capacityKWh: 82.7))
+        #expect(abs(energy - 13.232) < 0.001)
+        let power = try #require(session.averagePowerKW(capacityKWh: 82.7))
+        #expect(abs(power - 52.928) < 0.01)
+        #expect(session.isFast(capacityKWh: 82.7) == true)
+        #expect(session.energyKWh(capacityKWh: nil) == nil)
+    }
+
+    @Test func slowSessionIsNotFast() throws {
+        // 60 dakikada %50 → %60 ≈ 8,3 kWh/sa (AC)
+        let session = try #require(ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.50),
+            point(30, odo: 0, battery: 0.55),
+            point(60, odo: 0, battery: 0.60),
+        ]).first)
+        #expect(session.isFast(capacityKWh: 82.7) == false)
+    }
+
+    @Test func singlePointFluctuationIsNotACharge() {
+        let sessions = ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.72), point(5, odo: 0, battery: 0.73),
+        ])
+        #expect(sessions.isEmpty)
+    }
+
+    @Test func batteryGainWhileDrivingIsIgnored() {
+        // Yavaşlarken geri kazanım: kilometre artıyor.
+        let sessions = ChargeDeriver.sessions(from: [
+            point(0, odo: 100, battery: 0.50), point(5, odo: 103, battery: 0.60),
+        ])
+        #expect(sessions.isEmpty)
+    }
+
+    @Test func batteryDropEndsTheSession() throws {
+        let sessions = ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.40), point(5, odo: 0, battery: 0.50),
+            point(10, odo: 0, battery: 0.45),
+            point(15, odo: 0, battery: 0.45), point(20, odo: 0, battery: 0.55),
+        ])
+        #expect(sessions.count == 2)
+        #expect(sessions.map(\.endBattery) == [0.50, 0.55])
+    }
+
+    @Test func chargingFlagBridgesAPlateau() throws {
+        let session = try #require(ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.50, charging: true),
+            point(5, odo: 0, battery: 0.60, charging: true),
+            point(10, odo: 0, battery: 0.60, charging: true),
+            point(15, odo: 0, battery: 0.70, charging: true),
+        ]).first)
+        #expect(session.endBattery == 0.70)
+        #expect(session.duration == 15 * 60)
+    }
+
+    @Test func gapBetweenRecordsIsAnApproximateSession() throws {
+        // Uygulama 5 saat kapalıydı; batarya %20 → %80, araç yerinde.
+        let session = try #require(ChargeDeriver.sessions(from: [
+            point(0, odo: 700, battery: 0.20), point(300, odo: 700, battery: 0.80),
+        ]).first)
+        #expect(session.isApproximate)
+        let energy = try #require(session.energyKWh(capacityKWh: 82.7))
+        #expect(abs(energy - 49.62) < 0.001)
+        #expect(session.averagePowerKW(capacityKWh: 82.7) == nil)
+        #expect(session.isFast(capacityKWh: 82.7) == nil)
+    }
+
+    @Test func gapLongerThanADayIsIgnored() {
+        let sessions = ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.20), point(25 * 60, odo: 0, battery: 0.90),
+        ])
+        #expect(sessions.isEmpty)
+    }
+
+    @Test func approximateSessionNeedsTheMinimumGain() {
+        let sessions = ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: 0.50), point(300, odo: 0, battery: 0.52),
+        ])
+        #expect(sessions.isEmpty)
+    }
+
+    @Test func missingBatteryIsIgnored() {
+        #expect(ChargeDeriver.sessions(from: [
+            point(0, odo: 0, battery: nil), point(5, odo: 0, battery: 0.9),
+        ]).isEmpty)
+    }
+
+    @Test func totalEnergySumsSessions() {
+        let sessions = ChargeDeriver.sessions(from: fastCharge)
+            + ChargeDeriver.sessions(from: [point(0, odo: 0, battery: 0.20), point(300, odo: 0, battery: 0.80)])
+        let total = ChargeDeriver.totalEnergyKWh(of: sessions, capacityKWh: 82.7)
+        #expect(abs((total ?? 0) - (13.232 + 49.62)) < 0.001)
+        #expect(ChargeDeriver.totalEnergyKWh(of: [], capacityKWh: 82.7) == nil)
+        #expect(ChargeDeriver.totalEnergyKWh(of: sessions, capacityKWh: nil) == nil)
     }
 }
 
