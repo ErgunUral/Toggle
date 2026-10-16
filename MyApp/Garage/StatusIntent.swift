@@ -8,7 +8,7 @@ nonisolated struct VehicleStatusIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppLog.info(.app, "Siri/Kısayol: araç durumu istendi")
-        let service = TogglService()
+        let service = TogglService.shared
         guard await service.isSignedIn else {
             AppLog.warning(.app, "Siri/Kısayol: oturum yok")
             throw AppIntentError.UserActionRequired.signin
@@ -33,7 +33,7 @@ nonisolated struct VehicleStatusIntent: AppIntent {
             return .result(dialog: "Batarya bilgisi okunamadı.")
         }
         let percent = Int(battery.rounded())
-        let isCharging = state.chargeMode.map(Self.isCharging) ?? false
+        let isCharging = state.isCharging ?? false
 
         switch (state.range, isCharging) {
         case let (range?, true):
@@ -47,13 +47,6 @@ nonisolated struct VehicleStatusIntent: AppIntent {
         }
     }
 
-    /// Uygulamadaki şarj modu deseniyle aynıdır.
-    private static func isCharging(_ mode: String) -> Bool {
-        mode.range(
-            of: "^(CHRGMODE_CHARGE|(CHARGEMODE_)?(AC_CHARGING|DC_CHARGING|CHARGING_AC|CHARGING_DC|CHARGING))$",
-            options: .regularExpression
-        ) != nil
-    }
 }
 
 nonisolated enum VehicleStatusError: Error, CustomLocalizedStringResourceConvertible {

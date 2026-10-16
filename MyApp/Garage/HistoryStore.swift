@@ -34,7 +34,11 @@ final class HistoryStore {
     /// Canlı anlık görüntüyü kaydeder. Araç zamanı değişmediyse ya da son kayda çok yakınsa atlar.
     func record(_ snapshot: VehicleSnapshot) {
         guard snapshot.isLive else { return }
-        let date = snapshot.updatedAt ?? .now
+        // Araç zamanı yoksa kayıt sıralaması bozulacağından atlanır.
+        guard let date = snapshot.updatedAt else {
+            AppLog.debug(.refresh, "Geçmiş: kayıt atlandı (araç zamanı yok)")
+            return
+        }
         if let last = points.last, date.timeIntervalSince(last.date) < minimumInterval {
             AppLog.debug(.refresh, "Geçmiş: kayıt atlandı (son kayıttan \(Int(date.timeIntervalSince(last.date))) sn sonra)")
             return

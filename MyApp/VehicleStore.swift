@@ -51,6 +51,19 @@ nonisolated struct VehicleState: Sendable {
     var driveMode: String?
 }
 
+extension VehicleState {
+    /// APK'daki desenle aynı: şarj modu bir AC/DC şarj değeri ise şarj oluyordur.
+    /// nil: şarj modu okunamadı.
+    nonisolated var isCharging: Bool? {
+        chargeMode.map {
+            $0.range(
+                of: "^(CHRGMODE_CHARGE|(CHARGEMODE_)?(AC_CHARGING|DC_CHARGING|CHARGING_AC|CHARGING_DC|CHARGING))$",
+                options: .regularExpression
+            ) != nil
+        }
+    }
+}
+
 nonisolated enum ServiceError: LocalizedError {
     case notSignedIn, sessionExpired, cancelled
     case http(Int)
@@ -131,6 +144,9 @@ private nonisolated struct Tokens: Codable {
 
 /// Togg ID girişi ve salt okunur araç sorguları. Araca komut göndermez.
 actor TogglService {
+    /// Uygulama ve Siri/Kısayol aynı örneği paylaşır; böylece token yenilemeleri çakışmaz.
+    static let shared = TogglService()
+
     private let authURL = URL(string: "https://toggid.togg.cloud/auth/realms/toggid/protocol/openid-connect/auth")!
     private let tokenURL = URL(string: "https://toggid.togg.cloud/auth/realms/toggid/protocol/openid-connect/token")!
     private let apiBase = "https://tva-api.togg.cloud"
@@ -146,6 +162,9 @@ actor TogglService {
             return nil
         }
     }()
+
+    /// Devam eden token yenilemesi.
+    private var refreshTask: Task<Void, Error>?
 
     var isSignedIn: Bool { tokens != nil }
 
@@ -231,6 +250,11 @@ actor TogglService {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard status == 200, let json, let access = json["access_token"] as? String else {
             AppLog.error(.auth, "Token yanıtı geçersiz: HTTP \(status), error=\(json?["error"] as? String ?? "-"), error_description=\(json?["error_description"] as? String ?? "-"), anahtarlar=\(AppLog.shape(json))")
+            // Sunucu refresh token'ı reddettiyse oturum gerçekten bitmiştir.
+            if grant == "refresh_token", json?["error"] as? String == "invalid_grant" {
+                signOut()
+                throw ServiceError.sessionExpired
+            }
             throw ServiceError.badResponse("Oturum açılamadı; yeniden giriş yap.")
         }
         let lifetime = (json["expires_in"] as? Double) ?? 300
@@ -261,9 +285,20 @@ actor TogglService {
             signOut()
             throw ServiceError.sessionExpired
         }
-        do {
+        // Eşzamanlı istekler tek bir yenilemeyi paylaşır; refresh token rotasyonunda
+        // ikinci kullanım oturumu geçersiz kılabilir.
+        let task = refreshTask ?? Task {
             try await exchange(["client_id": clientID, "grant_type": "refresh_token", "refresh_token": refresh])
+        }
+        refreshTask = task
+        do {
+            try await task.value
+            refreshTask = nil
+        } catch ServiceError.sessionExpired {
+            refreshTask = nil
+            throw ServiceError.sessionExpired
         } catch {
+            refreshTask = nil
             AppLog.error(.auth, "Oturum yenilenemedi: \(AppLog.describe(error))")
             throw ServiceError.badResponse("Oturum yenilenemedi; yeniden giriş yap. Ağ bağlantını da kontrol et.")
         }
@@ -356,7 +391,8 @@ actor TogglService {
         }
         func num(_ any: Any?) -> Double? {
             if let n = any as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { return n.doubleValue }
-            if let s = any as? String { return Double(s) }
+            // Virgüllü ondalık gelirse de okunur.
+            if let s = any as? String { return Double(s.replacingOccurrences(of: ",", with: ".")) }
             return nil
         }
         func at(_ root: Any?, _ path: String...) -> Any? {
@@ -391,10 +427,8 @@ actor TogglService {
 
         func parseDate(_ stamp: String?) -> Date? {
             guard let stamp else { return nil }
-            if let date = ISO8601DateFormatter().date(from: stamp) { return date }
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            return fractional.date(from: stamp)
+            if let date = try? Date.ISO8601FormatStyle().parse(stamp) { return date }
+            return try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(stamp)
         }
         let stamp = (t["updatedOn"] as? String) ?? (json["timestamp"] as? String)
         state.updatedOn = parseDate(stamp)
@@ -426,6 +460,8 @@ actor TogglService {
 
     /// Birim ve biçim tespiti için ham değerleri yazar. Konum ve VIN içermez.
     private static func logRawValues(json: [String: Any], telemetry t: [String: Any]) {
+        // Ham sürüş ve telemetri verisi kişiseldir; yalnızca hata ayıklama derlemesinde yazılır.
+        #if DEBUG
         var picked: [String: Any] = [:]
         for key in ["color", "dataVolume", "dateFormat", "lastTripInfo", "year", "model"] {
             if let value = json[key] { picked[key] = value }
@@ -436,6 +472,7 @@ actor TogglService {
         guard let data = try? JSONSerialization.data(withJSONObject: picked, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return }
         AppLog.debug(.parse, "Ham değerler (konum/VIN hariç): \(text.prefix(3500))")
+        #endif
     }
 
     /// Hangi alanların okunabildiğini yazar. Konum için yalnızca var/yok bilgisi verilir.

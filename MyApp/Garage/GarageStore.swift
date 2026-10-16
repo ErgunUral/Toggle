@@ -21,7 +21,7 @@ final class GarageStore {
 
     let history = HistoryStore()
 
-    private let service = TogglService()
+    private let service = TogglService.shared
     /// Kullanıcı rengi elle seçtiyse araçtan gelen renk onun üzerine yazılmaz.
     private var isColorManual: Bool
 
@@ -90,10 +90,20 @@ final class GarageStore {
         selectedVIN = nil
         vehicleColor = nil
         snapshot = VehicleSnapshot()
+        // Başka hesapla girilirse eski aracın ölçümleri yeni grafiklere karışmasın.
+        history.clear()
         message = nil
     }
 
     // MARK: Veri
+
+    /// Başka araca geçilince eski aracın ölçümleri yeni aracın grafiklerine karışmasın.
+    func selectVehicle(_ vin: String) async {
+        guard vin != selectedVIN else { return }
+        selectedVIN = vin
+        history.clear()
+        await refresh()
+    }
 
     func refresh() async {
         guard !isRefreshing else {
@@ -177,9 +187,14 @@ final class GarageStore {
             next.sinceCharge = Self.stats(from: sinceCharge, capacityKWh: capacity, title: "Son şarjdan beri")
             next.tripsAreLive = true
         }
-        next.isCharging = live.chargeMode.map(Self.isCharging)
+        next.isCharging = live.isCharging
         next.driveMode = live.driveMode.map(Self.driveModeText)
-        AppLog.info(.parse, "Enerji: kalan=\(live.batteryEnergyKWh.map { String(format: "%.2f", $0) } ?? "yok") kWh, doluluk=\(live.battery.map { String(format: "%.0f", $0) } ?? "yok")% → ima edilen kapasite=\(capacity.map { String(format: "%.1f", $0) } ?? "yok") kWh, araç menzili=\(live.range.map { String(format: "%.0f", $0) } ?? "yok") km, gerçekçi menzil=\(next.realisticRange.map { String(format: "%.0f", $0) } ?? "yok") km (tüketim=\(next.sinceCharge.average.map { String(format: "%.1f", $0) } ?? "yok") kWh/100 km)")
+        func format(_ value: Double?, _ spec: String) -> String {
+            value.map { String(format: spec, $0) } ?? "yok"
+        }
+        let energyText = "kalan=\(format(live.batteryEnergyKWh, "%.2f")) kWh, doluluk=\(format(live.battery, "%.0f"))%"
+        let rangeText = "araç menzili=\(format(live.range, "%.0f")) km, gerçekçi menzil=\(format(next.realisticRange, "%.0f")) km"
+        AppLog.info(.parse, "Enerji: \(energyText) → ima edilen kapasite=\(format(capacity, "%.1f")) kWh, \(rangeText) (tüketim=\(format(next.sinceCharge.average, "%.1f")) kWh/100 km)")
         snapshot = next
 
         applyVehicleColor(named: live.colorName)
@@ -221,14 +236,6 @@ final class GarageStore {
             batteryPercent: percent,
             note: parts.isEmpty ? title : parts.joined(separator: " · ")
         )
-    }
-
-    /// APK'daki desenle aynı: şarj modu bir AC/DC şarj değeri ise şarj oluyordur.
-    private static func isCharging(_ mode: String) -> Bool {
-        mode.range(
-            of: "^(CHRGMODE_CHARGE|(CHARGEMODE_)?(AC_CHARGING|DC_CHARGING|CHARGING_AC|CHARGING_DC|CHARGING))$",
-            options: .regularExpression
-        ) != nil
     }
 
     /// DRIVEMODE_COMFORT → Comfort

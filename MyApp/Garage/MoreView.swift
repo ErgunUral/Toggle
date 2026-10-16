@@ -209,7 +209,7 @@ struct SettingsView: View {
                     if store.vehicles.count > 1 {
                         Picker("Araç", selection: Binding(
                             get: { store.selectedVIN ?? "" },
-                            set: { store.selectedVIN = $0; Task { await store.refresh() } }
+                            set: { vin in Task { await store.selectVehicle(vin) } }
                         )) {
                             ForEach(store.vehicles) { vehicle in
                                 Text(vehicle.name.isEmpty ? vehicle.vin : vehicle.name).tag(vehicle.vin)

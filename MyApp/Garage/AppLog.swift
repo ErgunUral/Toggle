@@ -71,8 +71,13 @@ nonisolated enum AppLog {
     static func warning(_ category: LogCategory, _ message: String) { write(.warning, category, message) }
     static func error(_ category: LogCategory, _ message: String) { write(.error, category, message) }
 
+    /// Kategori başına bir kez oluşturulur.
+    private static let loggers = Dictionary(uniqueKeysWithValues: LogCategory.allCases.map {
+        ($0, Logger(subsystem: subsystem, category: $0.rawValue))
+    })
+
     private static func write(_ level: LogLevel, _ category: LogCategory, _ message: String) {
-        let logger = Logger(subsystem: subsystem, category: category.rawValue)
+        guard let logger = loggers[category] else { return }
         switch level {
         case .debug: logger.debug("\(message, privacy: .public)")
         case .info: logger.info("\(message, privacy: .public)")
