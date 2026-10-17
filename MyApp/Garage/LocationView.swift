@@ -54,12 +54,22 @@ struct LocationView: View {
                 Text(updatedText(snapshot.updatedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let url = URL(string: "https://maps.apple.com/?daddr=\(coordinate.latitude),\(coordinate.longitude)") {
+                // dirflg=w yürüyüş, d sürüş. Başlangıç noktasını (kullanıcı konumu) Haritalar belirler;
+                // uygulama konum izni istemez.
+                if let url = URL(string: "https://maps.apple.com/?daddr=\(coordinate.latitude),\(coordinate.longitude)&dirflg=d") {
                     Link(destination: url) {
                         Label("Yol tarifi al", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+                }
+                if let url = URL(string: "https://maps.apple.com/?daddr=\(coordinate.latitude),\(coordinate.longitude)&dirflg=w") {
+                    Link(destination: url) {
+                        Label("Araca yürüyerek git", systemImage: "figure.walk")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glass)
                     .controlSize(.large)
                 }
             }
