@@ -741,7 +741,16 @@ struct DigitalKeyView: View {
         .onChange(of: bluetooth.state, initial: true) { _, _ in
             Task { await attemptProximityUnlock() }
         }
-        .onChange(of: bluetooth.discoveredRSSI, initial: false) { _, _ in
+        .onChange(of: bluetooth.discoveredRSSI, initial: false) { _, rssi in
+            // Araç yakında bulunduysa kullanıcıdan "Araca bağlan"a basmasını beklemeden bağlanır;
+            // kilit komutu yine yalnızca bağlantı ve anahtar doğrulamasından sonra gönderilir.
+            if proximityUnlockEnabled,
+               !proximityUnlockCompleted,
+               bluetooth.state == .idle,
+               bluetooth.discoveredName != nil,
+               let rssi, rssi >= -65 {
+                bluetooth.connectToDiscoveredVehicle()
+            }
             Task { await attemptProximityUnlock() }
         }
     }
