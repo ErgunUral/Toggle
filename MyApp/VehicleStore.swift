@@ -521,6 +521,7 @@ actor TogglService {
         AppLog.debug(.parse, "Sürüş özetleri: güncel=\(state.currentTrip == nil ? "yok" : "var"), sonŞarj=\(state.lastChargeTrip == nil ? "yok" : "var"); şarj modu=\(state.chargeMode ?? "yok"); sürüş modu=\(state.driveMode ?? "yok"); batarya enerjisi=\(state.batteryEnergyKWh.map { String(format: "%.2f kWh", $0) } ?? "yok") (ham), renk=\(state.colorName ?? "yok")")
         Self.logFieldSummary(state)
         Self.logRawValues(json: json, telemetry: t)
+        Self.logResponseShape(json: json)
         return state
     }
 
@@ -923,6 +924,41 @@ actor TogglService {
         guard let data = try? JSONSerialization.data(withJSONObject: picked, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return }
         AppLog.debug(.parse, "Ham değerler (konum/VIN hariç): \(text.prefix(8000))")
+        #endif
+    }
+
+    /// Yanıttaki tüm anahtar yollarını ve değer türlerini yazar; değerleri YAZMAZ.
+    /// Amaç, uygulamanın henüz okumadığı alanları (kapı/cam durumu, şarj gücü vb.) keşfetmektir.
+    /// Dizilerde yalnızca ilk öğe incelenir. Yol sayısı ve derinlik sınırlıdır.
+    private static func logResponseShape(json: [String: Any]) {
+        #if DEBUG
+        var paths: [String] = []
+        func kind(_ value: Any) -> String {
+            if let number = value as? NSNumber {
+                return CFGetTypeID(number) == CFBooleanGetTypeID() ? "bool" : "sayı"
+            }
+            if value is String { return "metin" }
+            if value is NSNull { return "null" }
+            return "?"
+        }
+        func walk(_ value: Any, _ path: String, _ depth: Int) {
+            guard paths.count < 400 else { return }
+            if let dict = value as? [String: Any] {
+                if dict.isEmpty { paths.append("\(path): {}"); return }
+                guard depth < 6 else { paths.append("\(path): {…}"); return }
+                for key in dict.keys.sorted() { walk(dict[key] as Any, path.isEmpty ? key : "\(path).\(key)", depth + 1) }
+            } else if let array = value as? [Any] {
+                if let first = array.first, depth < 6 {
+                    walk(first, "\(path)[]", depth + 1)
+                } else {
+                    paths.append("\(path)[]: boş")
+                }
+            } else {
+                paths.append("\(path): \(kind(value))")
+            }
+        }
+        walk(json, "", 0)
+        AppLog.debug(.parse, "Yanıt şeması (\(paths.count) yol, değer yok): \(paths.joined(separator: " | ").prefix(12000))")
         #endif
     }
 
