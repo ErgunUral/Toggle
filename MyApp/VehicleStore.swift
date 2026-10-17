@@ -64,6 +64,8 @@ nonisolated struct VehicleState: Sendable {
     var tiresRearPSI: (Double?, Double?) = (nil, nil)
     var currentTrip: TripInfo?
     var lastChargeTrip: TripInfo?
+    /// `lastTripInfo.myTrip`: kullanıcının kendi sıfırladığı yolculuk sayacı; her araçta gelmeyebilir.
+    var myTrip: TripInfo?
     /// `batteryTotalEnergyValue`. Değerin anlamı kesin değil: %72 doluluktayken 60,16 geldi;
     /// 60,16 / 0,72 ≈ 83,6 kWh (T10X'in kullanılabilir kapasitesine yakın) olduğundan
     /// kalan enerji (kWh) olarak yorumlanır.
@@ -502,6 +504,7 @@ actor TogglService {
         }
         state.currentTrip = trip("currentTrip")
         state.lastChargeTrip = trip("lastChargeTrip")
+        state.myTrip = trip("myTrip")
         state.batteryEnergyKWh = num(at(t, "battery", "content", "batteryTotalEnergy", "batteryTotalEnergyValue"))
         // Liste rengi öncelikli; VehicleInfo'daki renk yanlış olabiliyor.
         state.colorName = vehicle.color ?? (json["color"] as? String)

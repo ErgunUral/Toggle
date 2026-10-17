@@ -212,6 +212,8 @@ struct VehicleSnapshot {
     }
 
     var currentTrip = TripStats(distance: 18.4, average: 16.8, energy: 3.1, batteryPercent: 3.5, note: "Bugün 08:12 başladı", averageSpeed: 36)
+    /// Aracın "Yolculuğum" sayacı; yalnızca canlı veride ve araç bildirirse dolar.
+    var myTrip: TripStats?
     var sinceCharge = TripStats(distance: 142.6, average: 17.4, energy: 24.8, batteryPercent: 28, note: "Son şarj 2 gün önce", averageSpeed: 52)
 }
 

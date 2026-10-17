@@ -373,6 +373,7 @@ final class GarageStore {
             next.sinceCharge = Self.stats(from: sinceCharge, title: "Son şarjdan beri")
             next.tripsAreLive = true
         }
+        next.myTrip = live.myTrip.map { Self.stats(from: $0, title: "Yolculuğum") }
         next.isCharging = live.isCharging
         next.driveMode = live.driveMode.map(Self.driveModeText)
         func format(_ value: Double?, _ spec: String) -> String {

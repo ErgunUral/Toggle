@@ -185,6 +185,9 @@ struct HomeView: View {
 
                         LiveTripCard(title: "Mevcut yolculuk", trip: snapshot.currentTrip)
                         LiveTripCard(title: "Son şarjdan beri", trip: snapshot.sinceCharge)
+                        if let myTrip = snapshot.myTrip {
+                            LiveTripCard(title: "Yolculuğum", trip: myTrip)
+                        }
                     }
 
                     LiveDataSection("Konum", symbol: "location.fill") {
