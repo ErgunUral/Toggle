@@ -197,14 +197,18 @@ struct ClimateView: View {
         defer { isSending = false }
 
         do {
-            let result = try await store.sendClimateCommand(
+            _ = try await store.sendClimateCommand(
                 enabled: store.snapshot.climateOn,
                 temperature: Double(store.snapshot.targetTemperature)
             )
-            commandStatus = result.status.isEmpty ? "Sıcaklık uygulandı." : "Komut: \(result.status)"
+            commandStatus = "Sıcaklık araçta uygulandı."
             await loadLiveClimate()
         } catch {
             errorText = error.localizedDescription
+            // Sonuç doğrulanamadıysa araçtaki gerçek durum yine de okunur.
+            if error as? ClimateCommandError == .unconfirmed {
+                await loadLiveClimate()
+            }
         }
     }
 
@@ -216,14 +220,18 @@ struct ClimateView: View {
         defer { isSending = false }
 
         do {
-            let result = try await store.sendClimateCommand(
+            _ = try await store.sendClimateCommand(
                 enabled: !store.snapshot.climateOn,
                 temperature: Double(store.snapshot.targetTemperature)
             )
-            commandStatus = result.status.isEmpty ? "Komut tamamlandı." : "Komut: \(result.status)"
+            commandStatus = "Komut araçta tamamlandı."
             await loadLiveClimate()
         } catch {
             errorText = error.localizedDescription
+            // Sonuç doğrulanamadıysa araçtaki gerçek durum yine de okunur.
+            if error as? ClimateCommandError == .unconfirmed {
+                await loadLiveClimate()
+            }
         }
     }
 

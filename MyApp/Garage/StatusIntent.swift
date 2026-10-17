@@ -64,6 +64,9 @@ nonisolated private func sendClimate(enabled: Bool, temperature: Double) async t
         throw AppIntentError.UserActionRequired.signin
     } catch let error as VehicleStatusError {
         throw error
+    } catch let error as ClimateCommandError {
+        AppLog.warning(.app, "Siri/Kısayol: klima komutu sonucu: \(error)")
+        throw error
     } catch {
         AppLog.error(.app, "Siri/Kısayol: klima komutu başarısız: \(AppLog.describe(error))")
         throw VehicleStatusError.commandFailed

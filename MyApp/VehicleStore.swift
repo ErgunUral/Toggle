@@ -657,6 +657,7 @@ actor TogglService {
         guard let reply = replies.last else {
             throw ServiceError.badResponse("Klima komutu yanıtı beklenen formatta değil.")
         }
+        try ClimateCommandError.check(reply)
         return reply
     }
 

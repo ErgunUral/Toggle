@@ -39,6 +39,40 @@ nonisolated struct ClimateCommandResult: Sendable, Equatable {
     let code: String?
 }
 
+/// Klima komutunun araçtan dönen son durumu. APK ile aynı sonlanma durumları kullanılır
+/// (COMPLETED, FAILED, REJECTED, ERROR, CANCELLED); bunların dışındaki durum araç sonucunun
+/// henüz bilinmediği anlamına gelir.
+nonisolated enum ClimateCommandError: Error, Equatable, CustomLocalizedStringResourceConvertible {
+    case failed
+    case rejected
+    case cancelled
+    /// Komut kabul edildi ama akış sonlanma durumu olmadan bitti.
+    case unconfirmed
+
+    static func check(_ result: ClimateCommandResult) throws {
+        switch result.status.uppercased() {
+        case "COMPLETED": return
+        case "FAILED", "ERROR": throw ClimateCommandError.failed
+        case "REJECTED": throw ClimateCommandError.rejected
+        case "CANCELLED": throw ClimateCommandError.cancelled
+        default: throw ClimateCommandError.unconfirmed
+        }
+    }
+
+    var localizedStringResource: LocalizedStringResource {
+        switch self {
+        case .failed: "Araç klima komutunu uygulayamadı."
+        case .rejected: "Araç klima komutunu reddetti."
+        case .cancelled: "Klima komutu iptal edildi."
+        case .unconfirmed: "Komut gönderildi ama aracın uyguladığı doğrulanamadı. Klima durumunu kontrol et."
+        }
+    }
+}
+
+extension ClimateCommandError: LocalizedError {
+    var errorDescription: String? { String(localized: localizedStringResource) }
+}
+
 nonisolated enum AccountPayload {
     static func items(_ json: [String: Any], preferredKeys: [String]) -> [[String: Any]] {
         for key in preferredKeys {

@@ -393,3 +393,30 @@ struct PeriodSummaryTests {
         #expect(blocks.last?.metrics.journeyCount == 4)
     }
 }
+
+// MARK: - Klima komutu sonucu
+
+struct ClimateCommandResultTests {
+    private func result(_ status: String) -> ClimateCommandResult {
+        ClimateCommandResult(requestID: "r1", status: status, code: nil)
+    }
+
+    @Test func completedPasses() throws {
+        try ClimateCommandError.check(result("COMPLETED"))
+        try ClimateCommandError.check(result("completed"))
+    }
+
+    @Test(arguments: [
+        ("FAILED", ClimateCommandError.failed),
+        ("ERROR", ClimateCommandError.failed),
+        ("REJECTED", ClimateCommandError.rejected),
+        ("CANCELLED", ClimateCommandError.cancelled),
+        ("", ClimateCommandError.unconfirmed),
+        ("IN_PROGRESS", ClimateCommandError.unconfirmed),
+    ])
+    func nonCompletedStatusThrows(status: String, expected: ClimateCommandError) {
+        #expect(throws: expected) {
+            try ClimateCommandError.check(result(status))
+        }
+    }
+}
