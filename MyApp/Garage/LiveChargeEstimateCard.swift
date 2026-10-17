@@ -3,8 +3,9 @@ import SwiftUI
 struct LiveChargeEstimateCard: View {
     let snapshot: VehicleSnapshot
 
-    @State private var targetPercent = 80.0
-    @State private var chargingPower = 11.0
+    // Şarj bitiş bildirimi de bu değerleri okur (GarageStore).
+    @AppStorage(GarageStore.chargeTargetPercentKey) private var targetPercent = 80.0
+    @AppStorage(GarageStore.chargePowerKWKey) private var chargingPower = 11.0
 
     private var currentPercent: Double? {
         snapshot.battery.map { $0 * 100 }

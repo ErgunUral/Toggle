@@ -35,6 +35,10 @@ final class GarageStore {
     private static let colorKey = "vehicleColor"
     private static let manualColorKey = "vehicleColorIsManual"
     private static let lowAuxNotificationDateKey = "lowAuxNotificationDate"
+    private static let chargeCompleteNotificationID = "charge-complete"
+    /// `LiveChargeEstimateCard` aynı anahtarlarla hedef ve güç profilini saklar.
+    nonisolated static let chargeTargetPercentKey = "chargeTargetPercent"
+    nonisolated static let chargePowerKWKey = "chargePowerKW"
     /// Ayarlar'daki klima açılış derecesinin `UserDefaults` anahtarı.
     static let climateDefaultKey = "climateDefaultTemp"
     static let climateTemperatureRange = 16...30
@@ -206,6 +210,7 @@ final class GarageStore {
             saveCache(for: vehicle.vin)
             history.record(snapshot)
             await notifyIfNeeded()
+            await scheduleChargeCompleteNotification()
             // Yeni uç noktaların yanıt yapısını oturum başına bir kez günlüğe yazar (yalnızca DEBUG'da etkindir).
             if !didProbeExtraEndpoints {
                 didProbeExtraEndpoints = true
@@ -225,6 +230,55 @@ final class GarageStore {
             } else {
                 message = error.localizedDescription
             }
+        }
+    }
+
+    /// Şarj oluyorsa hedef seviyeye tahmini varış anı için yerel bildirim planlar.
+    /// Her yenilemede aynı kimlikle yeniden planlanır; şarj bitince veya hedef geçilince iptal edilir.
+    /// Süre, anlık kW verisi olmadığından `LiveChargeEstimateCard` ile aynı AC güç profili ve %90 verimle hesaplanır.
+    private func scheduleChargeCompleteNotification() async {
+        let center = UNUserNotificationCenter.current()
+        let identifier = Self.chargeCompleteNotificationID
+
+        let defaults = UserDefaults.standard
+        let target = defaults.object(forKey: Self.chargeTargetPercentKey) as? Double ?? 80
+        let power = defaults.object(forKey: Self.chargePowerKWKey) as? Double ?? 11
+
+        guard snapshot.isCharging == true,
+              let battery = snapshot.battery,
+              let capacity = snapshot.usableCapacityKWh,
+              power > 0,
+              target > battery * 100 else {
+            center.removePendingNotificationRequests(withIdentifiers: [identifier])
+            return
+        }
+
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized else { return }
+
+        let hours = (target / 100 - battery) * capacity / power / 0.9
+        // Çok kısa veya uçuk tahminlerde bildirim planlamaz.
+        guard hours > 0, hours < 24 else {
+            center.removePendingNotificationRequests(withIdentifiers: [identifier])
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Şarj hedefe yaklaştı"
+        content.body = "Tahminen %\(target.decimal()) seviyesine ulaştı. Süre, seçilen AC güç profiline göre hesaplanır."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(60, hours * 3600), repeats: false)
+        )
+
+        do {
+            try await center.add(request)
+            AppLog.info(.app, "Şarj bitiş bildirimi planlandı (~\(Int(hours * 60)) dk)")
+        } catch {
+            AppLog.warning(.app, "Şarj bitiş bildirimi planlanamadı: \(AppLog.describe(error))")
         }
     }
 
