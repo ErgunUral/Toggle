@@ -570,6 +570,43 @@ actor TogglService {
         return ServerAnalytics.page(from: json, isCharge: isCharge)
     }
 
+    /// APK'deki Certificates/GetCertificate çağrısının iOS karşılığı.
+    /// Sertifika yalnızca Togg ID oturumuyla ve hesabın sahip olduğu VIN için istenir.
+    func digitalCertificate(vin: String, phonePublicKey: String) async throws -> DigitalCertificateResponse {
+        guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil else {
+            throw ServiceError.badResponse("Geçersiz VIN.")
+        }
+        guard phonePublicKey.range(of: "^[0-9a-fA-F]{128}$", options: .regularExpression) != nil else {
+            throw ServiceError.badResponse("Telefon açık anahtarı geçersiz.")
+        }
+
+        let path = "/smart-access/api/v1/Certificates/GetCertificate?phonePublicKey=\(phonePublicKey)&vin=\(vin)&isOwner=true"
+        let json = try await get(
+            path,
+            extraHeaders: [
+                "x-app-build-number": "663",
+                "Accept": "application/json"
+            ]
+        )
+
+        let certificateKeys = ["certificateBase64", "certificate", "cert"]
+        guard let certificate = certificateKeys
+            .compactMap({ json[$0] as? String })
+            .first(where: { !$0.isEmpty }) else {
+            throw ServiceError.badResponse("Sunucu doğrulanabilir dijital anahtar sertifikası döndürmedi.")
+        }
+
+        let vehicleKey = ["carPublicKey", "vehiclePublicKey", "vehicleKey", "smartAccessCarPubKey"]
+            .compactMap { json[$0] as? String }
+            .first(where: { !$0.isEmpty })
+
+        AppLog.info(.network, "Dijital anahtar sertifikası alındı; araç anahtarı=\(vehicleKey == nil ? "yanıtta yok" : "var")")
+        return DigitalCertificateResponse(
+            certificateBase64: certificate,
+            vehiclePublicKey: vehicleKey
+        )
+    }
+
     func climateState(vin: String) async throws -> ClimateState {
         guard vin.range(of: "^[A-HJ-NPR-Z0-9]{17}$", options: .regularExpression) != nil else {
             throw ServiceError.badResponse("Geçersiz VIN.")

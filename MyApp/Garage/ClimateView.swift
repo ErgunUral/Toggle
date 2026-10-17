@@ -6,19 +6,34 @@ struct ClimateView: View {
     @State private var isSending = false
     @State private var errorText: String?
     @State private var commandStatus: String?
+    @State private var showLiveClimateConfirmation = false
+    @State private var showTemperatureConfirmation = false
 
     var body: some View {
         @Bindable var store = store
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
+                    BrandPageHeader(
+                        title: "İklim",
+                        subtitle: "Kabin konforunu uzaktan yönet",
+                        symbol: "fan.fill"
+                    )
+
                     dial
+                    if store.snapshot.isLive {
+                        Button("Sıcaklığı uygula", systemImage: "checkmark.circle") {
+                            showTemperatureConfirmation = true
+                        }
+                        .buttonStyle(.glass)
+                        .disabled(isLoading || isSending)
+                    }
                     Button(
                         store.snapshot.climateOn ? "Klimayı kapat" : "Klimayı başlat",
                         systemImage: "power"
                     ) {
                         if store.snapshot.isLive {
-                            Task { await toggleLiveClimate() }
+                            showLiveClimateConfirmation = true
                         } else {
                             store.toggleClimate()
                         }
@@ -83,6 +98,30 @@ struct ClimateView: View {
             }
             .navigationTitle("Klima")
             .navigationSubtitle("Kabin \(store.snapshot.inside.decimal())°C")
+            .confirmationDialog(
+                store.snapshot.climateOn ? "Klimayı kapat?" : "Klimayı başlat?",
+                isPresented: $showLiveClimateConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(store.snapshot.climateOn ? "Klimayı kapat" : "Klimayı başlat") {
+                    Task { await toggleLiveClimate() }
+                }
+                Button("İptal", role: .cancel) {}
+            } message: {
+                Text("Bu işlem gerçek araç üzerinde uygulanacaktır.")
+            }
+            .confirmationDialog(
+                "Hedef sıcaklık gönderilsin mi?",
+                isPresented: $showTemperatureConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("\(store.snapshot.targetTemperature)°C olarak uygula") {
+                    Task { await applyLiveTemperature() }
+                }
+                Button("İptal", role: .cancel) {}
+            } message: {
+                Text("Klima durumu değişmeden hedef sıcaklık gerçek araca gönderilecektir.")
+            }
         }
     }
 
@@ -96,7 +135,7 @@ struct ClimateView: View {
                 VStack(spacing: 0) {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Text("\(snapshot.targetTemperature)")
-                            .font(.system(size: 84, weight: .light, design: .rounded))
+                            .font(.system(.largeTitle, design: .rounded).weight(.light))
                             .contentTransition(.numericText())
                         Text("°C").font(.title2).foregroundStyle(.secondary)
                     }
@@ -107,6 +146,9 @@ struct ClimateView: View {
             }
             .frame(width: 250, height: 250)
             .animation(.smooth, value: snapshot.targetTemperature)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Klima hedef sıcaklığı")
+            .accessibilityValue("\(snapshot.targetTemperature) derece, \(snapshot.climateOn ? "açık" : "kapalı")")
 
             GlassEffectContainer(spacing: 20) {
                 HStack(spacing: 28) {
@@ -147,6 +189,25 @@ struct ClimateView: View {
         }
     }
 
+    private func applyLiveTemperature() async {
+        guard !isSending else { return }
+        isSending = true
+        errorText = nil
+        commandStatus = nil
+        defer { isSending = false }
+
+        do {
+            let result = try await store.sendClimateCommand(
+                enabled: store.snapshot.climateOn,
+                temperature: Double(store.snapshot.targetTemperature)
+            )
+            commandStatus = result.status.isEmpty ? "Sıcaklık uygulandı." : "Komut: \(result.status)"
+            await loadLiveClimate()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
     private func toggleLiveClimate() async {
         guard !isSending else { return }
         isSending = true
@@ -159,7 +220,7 @@ struct ClimateView: View {
                 enabled: !store.snapshot.climateOn,
                 temperature: Double(store.snapshot.targetTemperature)
             )
-            commandStatus = result.status.isEmpty ? "Komut tamamlandı." : "Komut: (result.status)"
+            commandStatus = result.status.isEmpty ? "Komut tamamlandı." : "Komut: \(result.status)"
             await loadLiveClimate()
         } catch {
             errorText = error.localizedDescription

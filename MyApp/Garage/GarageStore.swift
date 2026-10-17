@@ -1,13 +1,40 @@
 import SwiftUI
 import AuthenticationServices
 import CoreLocation
+import UserNotifications
 import WidgetKit
+
+private struct CachedVehicleSnapshot: Codable {
+    let name: String
+    let model: String
+    let edition: String
+    let year: Int
+    let plate: String?
+    let battery: Double?
+    let range: Double?
+    let batteryEnergyKWh: Double?
+    let odometer: Double?
+    let inside: Double?
+    let outside: Double?
+    let auxBattery: Double?
+    let internetUsedGB: Double
+    let internetQuotaGB: Double
+    let isCharging: Bool?
+    let driveMode: String?
+    let latitude: Double?
+    let longitude: Double?
+    let updatedAt: Date?
+    let brakeWarning: Bool?
+    let engineWarning: Bool?
+}
 
 /// Uygulamanın tek veri kaynağı. Giriş yapılmamışsa örnek veri,
 /// yapılmışsa Togg'dan canlı veri ve desteklenen uzaktan kontrolleri kullanır.
 @MainActor @Observable
 final class GarageStore {
     private static let colorKey = "vehicleColor"
+    private static let manualColorKey = "vehicleColorIsManual"
+    private static let lowAuxNotificationDateKey = "lowAuxNotificationDate"
     /// Ayarlar'daki klima açılış derecesinin `UserDefaults` anahtarı.
     static let climateDefaultKey = "climateDefaultTemp"
     static let climateTemperatureRange = 16...30
@@ -16,8 +43,13 @@ final class GarageStore {
     /// Araçtan okunan son renk; henüz okunmadıysa son kaydedilen ya da mavi.
     var color: VehicleColor
     var isRefreshing = false
+    /// Sunucudan son başarılı araç verisi sorgusunun uygulama zamanı.
+    var lastRefreshAt: Date?
     var isSignedIn = false
+    var isUsingCachedData = false
     var message: String?
+
+    private let cacheDefaults = UserDefaults(suiteName: "group.com.ibrahim.togggaraj") ?? .standard
     var vehicles: [VehicleSummary] = []
     var selectedVIN: String?
 
@@ -28,9 +60,8 @@ final class GarageStore {
 
     init() {
         let defaults = UserDefaults.standard
+        selectedVIN = cacheDefaults.string(forKey: "selectedVIN")
         color = VehicleColor(rawValue: defaults.string(forKey: Self.colorKey) ?? "") ?? .blue
-        // Elle renk seçimi kaldırıldı; eski ayar kalmasın.
-        defaults.removeObject(forKey: "vehicleColorIsManual")
         snapshot.targetTemperature = Self.climateDefaultTemperature
     }
 
@@ -47,13 +78,43 @@ final class GarageStore {
         UserDefaults.standard.set(newColor.rawValue, forKey: Self.colorKey)
     }
 
+    var isColorManual: Bool {
+        UserDefaults.standard.bool(forKey: Self.manualColorKey)
+    }
+
+    func setManualColor(_ newColor: VehicleColor) {
+        UserDefaults.standard.set(true, forKey: Self.manualColorKey)
+        setColor(newColor)
+    }
+
+    func useVehicleColorFromAPI() {
+        UserDefaults.standard.set(false, forKey: Self.manualColorKey)
+    }
+
     // MARK: Oturum
 
     /// Keychain'deki oturumu okur; oturum varsa canlı veriyi yükler.
     func syncSignInState() async {
         isSignedIn = await service.isSignedIn
         AppLog.info(.app, "Oturum durumu: \(isSignedIn ? "açık (canlı mod)" : "kapalı (örnek mod)")")
-        if isSignedIn { await refresh() }
+        if isSignedIn {
+            await requestNotificationPermission()
+            await refresh()
+        }
+    }
+
+    /// Bildirim iznini kullanıcıya açıkça sorar; daha önce karar verildiyse sistem ekranı açılmaz.
+    func requestNotificationPermission() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .notDetermined else { return }
+
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            AppLog.info(.app, "Bildirim izni: \(granted ? "verildi" : "reddedildi")")
+        } catch {
+            AppLog.warning(.app, "Bildirim izni alınamadı: \(AppLog.describe(error))")
+        }
     }
 
     func signIn(using session: WebAuthenticationSession) async {
@@ -81,6 +142,8 @@ final class GarageStore {
         isSignedIn = false
         vehicles = []
         selectedVIN = nil
+        cacheDefaults.removeObject(forKey: "selectedVIN")
+        isUsingCachedData = false
         snapshot = VehicleSnapshot()
         // Başka hesapla girilirse eski aracın ölçümleri yeni grafiklere karışmasın.
         history.clear()
@@ -93,6 +156,8 @@ final class GarageStore {
     func selectVehicle(_ vin: String) async {
         guard vin != selectedVIN else { return }
         selectedVIN = vin
+        cacheDefaults.set(vin, forKey: "selectedVIN")
+        isUsingCachedData = false
         history.clear()
         await refresh()
     }
@@ -119,6 +184,9 @@ final class GarageStore {
             vehicles = try await service.vehicles()
             if selectedVIN == nil || !vehicles.contains(where: { $0.vin == selectedVIN }) {
                 selectedVIN = vehicles.first?.vin
+                if let selectedVIN {
+                    cacheDefaults.set(selectedVIN, forKey: "selectedVIN")
+                }
                 AppLog.info(.refresh, "Araç seçildi: \(selectedVIN.map(AppLog.maskVIN) ?? "yok") (toplam \(vehicles.count))")
             }
             guard let vehicle = vehicles.first(where: { $0.vin == selectedVIN }) else {
@@ -127,13 +195,17 @@ final class GarageStore {
                 return
             }
             apply(try await service.state(for: vehicle))
+            lastRefreshAt = .now
             snapshot.plate = vehicle.plate.isEmpty ? nil : vehicle.plate
             // Model yılı için liste doğru; VehicleInfo'daki yıl yanlış geliyor.
             if let year = vehicle.year.flatMap({ Int($0) }) { snapshot.year = year }
             snapshot.ownerType = vehicle.ownerType
             snapshot.keySharingEnabled = vehicle.keySharingEnabled
             snapshot.manufacturer = vehicle.manufacturer
+            isUsingCachedData = false
+            saveCache(for: vehicle.vin)
             history.record(snapshot)
+            await notifyIfNeeded()
             // Yeni uç noktaların yanıt yapısını oturum başına bir kez günlüğe yazar (yalnızca DEBUG'da etkindir).
             if !didProbeExtraEndpoints {
                 didProbeExtraEndpoints = true
@@ -147,15 +219,58 @@ final class GarageStore {
             message = ServiceError.sessionExpired.localizedDescription
         } catch {
             AppLog.error(.refresh, "Canlı yenileme başarısız (\(AppLog.ms(since: started))): \(AppLog.describe(error))")
-            message = error.localizedDescription
+            if let vin = selectedVIN, loadCache(for: vin) {
+                isUsingCachedData = true
+                message = "Canlı veri alınamadı; son kayıtlı veri gösteriliyor."
+            } else {
+                message = error.localizedDescription
+            }
+        }
+    }
+
+    /// Düşük 12 V akü için günde en fazla bir yerel bildirim gönderir.
+    private func notifyIfNeeded() async {
+        let key = Self.lowAuxNotificationDateKey
+        guard let level = snapshot.auxBattery else { return }
+        let defaults = UserDefaults.standard
+
+        guard level <= AuxBattery.lowThreshold else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+
+        if let lastDate = defaults.object(forKey: key) as? Date,
+           Date.now.timeIntervalSince(lastDate) < 24 * 60 * 60 {
+            return
+        }
+
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "12 V akü düşük"
+        content.body = "Araç 12 V akü seviyesi %\((level * 100).decimal()) olarak ölçüldü."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "low-aux-battery",
+            content: content,
+            trigger: nil
+        )
+
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            defaults.set(Date.now, forKey: key)
+            AppLog.info(.app, "12 V akü düşük bildirimi planlandı")
+        } catch {
+            AppLog.warning(.app, "12 V akü bildirimi planlanamadı: \(AppLog.describe(error))")
         }
     }
 
     /// Canlı veriyi okunabilen alanlara yazar. Okunamayan alanlar nil kalır;
     /// internet kotası ve kontroller için canlı kaynak olmadığından örnek kalır.
     private func apply(_ live: VehicleState) {
-        var next = VehicleSnapshot()
-        next.isLive = true
+        var next = VehicleSnapshot.liveEmpty
         next.name = live.name
         next.model = Self.modelName(live.model)
         next.edition = live.edition
@@ -219,6 +334,83 @@ final class GarageStore {
         AppLog.debug(.refresh, "Anlık görüntü canlı veriyle güncellendi (sürüş özeti canlı=\(next.tripsAreLive), şarj oluyor=\(next.isCharging.map(String.init(describing:)) ?? "bilinmiyor"))")
     }
 
+    private func cacheKey(for vin: String) -> String {
+        let encoded = Data(vin.utf8).base64EncodedString()
+        return "vehicle.snapshot.cache.\(encoded)"
+    }
+
+    private func saveCache(for vin: String) {
+        let coordinate = snapshot.coordinate
+        let cached = CachedVehicleSnapshot(
+            name: snapshot.name,
+            model: snapshot.model,
+            edition: snapshot.edition,
+            year: snapshot.year,
+            plate: snapshot.plate,
+            battery: snapshot.battery,
+            range: snapshot.range,
+            batteryEnergyKWh: snapshot.batteryEnergyKWh,
+            odometer: snapshot.odometer,
+            inside: snapshot.inside,
+            outside: snapshot.outside,
+            auxBattery: snapshot.auxBattery,
+            internetUsedGB: snapshot.internetUsedGB,
+            internetQuotaGB: snapshot.internetQuotaGB,
+            isCharging: snapshot.isCharging,
+            driveMode: snapshot.driveMode,
+            latitude: coordinate?.latitude,
+            longitude: coordinate?.longitude,
+            updatedAt: snapshot.updatedAt,
+            brakeWarning: snapshot.brakeWarning,
+            engineWarning: snapshot.engineWarning
+        )
+
+        guard let data = try? JSONEncoder().encode(cached) else {
+            AppLog.warning(.cache, "Snapshot cache kodlanamadı")
+            return
+        }
+        cacheDefaults.set(data, forKey: cacheKey(for: vin))
+        AppLog.debug(.cache, "Snapshot cache kaydedildi")
+    }
+
+    @discardableResult
+    private func loadCache(for vin: String) -> Bool {
+        guard let data = cacheDefaults.data(forKey: cacheKey(for: vin)),
+              let cached = try? JSONDecoder().decode(CachedVehicleSnapshot.self, from: data) else {
+            return false
+        }
+
+        var restored = VehicleSnapshot.liveEmpty
+        restored.name = cached.name
+        restored.model = cached.model
+        restored.edition = cached.edition
+        restored.year = cached.year
+        restored.plate = cached.plate
+        restored.battery = cached.battery
+        restored.range = cached.range
+        restored.batteryEnergyKWh = cached.batteryEnergyKWh
+        restored.odometer = cached.odometer
+        restored.inside = cached.inside
+        restored.outside = cached.outside
+        restored.auxBattery = cached.auxBattery
+        restored.internetUsedGB = cached.internetUsedGB
+        restored.internetQuotaGB = cached.internetQuotaGB
+        restored.isCharging = cached.isCharging
+        restored.driveMode = cached.driveMode
+        restored.brakeWarning = cached.brakeWarning
+        restored.engineWarning = cached.engineWarning
+        restored.coordinate = if let latitude = cached.latitude, let longitude = cached.longitude {
+            CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        } else {
+            nil
+        }
+        restored.updatedAt = cached.updatedAt
+        snapshot = restored
+        publishWidgetSnapshot(restored)
+        AppLog.info(.cache, "Son başarılı snapshot cache'den yüklendi")
+        return true
+    }
+
     private func publishWidgetSnapshot(_ snapshot: VehicleSnapshot) {
         guard let defaults = UserDefaults(suiteName: "group.com.ibrahim.togggaraj") else { return }
         defaults.set(snapshot.name, forKey: "widget.vehicleName")
@@ -230,6 +422,10 @@ final class GarageStore {
 
     /// Araçtan gelen rengi okur ve uygular; okunamayan ya da tanınmayan renkte son renk korunur.
     private func applyVehicleColor(named name: String?) {
+        guard !isColorManual else {
+            AppLog.debug(.parse, "Araç rengi: manuel tercih korunuyor")
+            return
+        }
         guard let name else {
             AppLog.debug(.parse, "Araç rengi: yanıtta yok")
             return
@@ -289,6 +485,11 @@ final class GarageStore {
     func climateState() async throws -> ClimateState {
         guard isSignedIn, let vin = selectedVIN else { throw ServiceError.notSignedIn }
         return try await service.climateState(vin: vin)
+    }
+
+    func digitalCertificate(phonePublicKey: String) async throws -> DigitalCertificateResponse {
+        guard isSignedIn, let vin = selectedVIN else { throw ServiceError.notSignedIn }
+        return try await service.digitalCertificate(vin: vin, phonePublicKey: phonePublicKey)
     }
 
     func sendClimateCommand(enabled: Bool, temperature: Double) async throws -> ClimateCommandResult {

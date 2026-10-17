@@ -99,6 +99,48 @@ struct TireTemperatures {
 /// Araç durumu. Varsayılan değerler örnek veridir; `isLive` true ise okunabilen
 /// alanlar Togg'dan gelir, okunamayanlar nil kalır, geri kalan alanlar örnektir.
 struct VehicleSnapshot {
+    /// API'den yalnızca gerçekten gelen alanları taşıyan canlı başlangıç durumu.
+    /// Örnek verilerin canlı ekranda görünmesini engeller.
+    static var liveEmpty: VehicleSnapshot {
+        var snapshot = VehicleSnapshot()
+        snapshot.isLive = true
+        snapshot.name = "Araç"
+        snapshot.model = ""
+        snapshot.edition = ""
+        snapshot.year = 0
+        snapshot.vin = ""
+        snapshot.plate = nil
+        snapshot.battery = nil
+        snapshot.range = nil
+        snapshot.batteryEnergyKWh = nil
+        snapshot.odometer = nil
+        snapshot.inside = nil
+        snapshot.outside = nil
+        snapshot.auxBattery = nil
+        snapshot.internetQuotaIsLive = false
+        snapshot.tires = TirePressure(frontLeft: nil, frontRight: nil, rearLeft: nil, rearRight: nil)
+        snapshot.tireTemperatures = TireTemperatures()
+        snapshot.brakeWarning = nil
+        snapshot.engineWarning = nil
+        snapshot.softwareVersion = nil
+        snapshot.ownerType = nil
+        snapshot.keySharingEnabled = nil
+        snapshot.manufacturer = nil
+        snapshot.internetUsedGB = 0
+        snapshot.internetQuotaGB = 0
+        snapshot.isCharging = nil
+        snapshot.driveMode = nil
+        snapshot.doorsLocked = false
+        snapshot.trunkOpen = false
+        snapshot.climateOn = false
+        snapshot.currentTrip = TripStats(distance: 0, average: nil, energy: nil, batteryPercent: nil, note: "Canlı veri bekleniyor", averageSpeed: nil)
+        snapshot.sinceCharge = TripStats(distance: 0, average: nil, energy: nil, batteryPercent: nil, note: "Canlı veri bekleniyor", averageSpeed: nil)
+        snapshot.coordinate = nil
+        snapshot.address = nil
+        snapshot.updatedAt = nil
+        return snapshot
+    }
+
     var isLive = false
     /// Sürüş özetleri canlı veriden geldiyse true.
     var tripsAreLive = false
@@ -212,13 +254,6 @@ struct SubscriptionItem: Identifiable {
     let isActive: Bool
 }
 
-struct DigitalKey: Identifiable {
-    let id = UUID()
-    let name: String
-    let detail: String
-    let symbol: String
-}
-
 enum SampleData {
     private static func daysAgo(_ days: Int, hour: Int = 12) -> Date {
         let day = Calendar.current.date(byAdding: .day, value: -days, to: .now) ?? .now
@@ -250,11 +285,6 @@ enum SampleData {
         SubscriptionItem(title: "Bağlantı paketi", detail: "10 GB / ay · yenileme 1 Kasım", isActive: true),
         SubscriptionItem(title: "Uzaktan kontrol", detail: "Sürekli aktif", isActive: true),
         SubscriptionItem(title: "Premium navigasyon", detail: "Abone değilsin", isActive: false),
-    ]
-
-    static let digitalKeys: [DigitalKey] = [
-        DigitalKey(name: "iPhone'um", detail: "Birincil anahtar", symbol: "iphone"),
-        DigitalKey(name: "Misafir anahtarı", detail: "Süresi 3 gün sonra doluyor", symbol: "person.badge.key"),
     ]
 
     static let specs: [(String, String)] = [

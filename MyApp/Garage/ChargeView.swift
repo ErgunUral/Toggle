@@ -26,9 +26,30 @@ struct ChargeView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 22) {
+                    BrandPageHeader(
+                        title: "Şarj merkezi",
+                        subtitle: "Enerjiyi planla, maliyeti ve menzili izle",
+                        symbol: "bolt.fill"
+                    )
+
                     statusCard
                     // Planlayıcının çıktıları (ücret, AC/DC süreleri) varsayıma dayandığından canlı modda gösterilmez.
                     if store.snapshot.isLive {
+                        HistoricalChargePlannerCard(
+                            snapshot: store.snapshot,
+                            sessions: store.history.chargeSessions(lastDays: 90)
+                        )
+                        SmartChargingSuggestionCard(snapshot: store.snapshot)
+                        LiveChargeEstimateCard(snapshot: store.snapshot)
+                        NavigationLink {
+                            BatteryHealthView()
+                        } label: {
+                            Label("Batarya sağlığı ve kapasite trendi", systemImage: "battery.100percent")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .glassCard()
+                        }
+                        .buttonStyle(.plain)
                         ServerRecordSection(isCharge: true, period: .monthly, limit: 5)
                         liveSessions
                     } else {
@@ -53,13 +74,16 @@ struct ChargeView: View {
             .frame(width: 92, height: 92)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(store.snapshot.battery.map { ($0 * 100).decimal() } ?? "—")%")
-                    .font(.system(size: 40, weight: .semibold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded).weight(.semibold))
                 Text("\(chargeStatusText) · \(store.snapshot.range.decimal()) km menzil")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
         .glassCard()
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Şarj durumu")
+            .accessibilityValue("\(store.snapshot.battery.map { ($0 * 100).decimal() } ?? "—") yüzde pil, \(chargeStatusText), \(store.snapshot.range.decimal()) kilometre menzil")
     }
 
     private var planner: some View {

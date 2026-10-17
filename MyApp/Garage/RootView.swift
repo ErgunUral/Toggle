@@ -11,7 +11,7 @@ struct RootView: View {
             // Metinler Türkçe olduğundan tarih ve sayı biçimleri de Türkçe olur.
             .environment(\.locale, Locale(identifier: "tr_TR"))
             .preferredColorScheme(AppTheme(rawValue: themeRaw)?.colorScheme)
-            // Uygulama öne gelince oturumu okur; açıkken canlı veriyi 2 dakikada bir yeniler.
+            // Uygulama öne gelince oturumu okur; açıkken canlı veriyi 30 saniyede bir yeniler.
             .task(id: scenePhase) {
                 AppLog.debug(.app, "scenePhase=\(String(describing: scenePhase))")
                 guard scenePhase == .active else { return }
@@ -20,10 +20,10 @@ struct RootView: View {
                 AppLog.debug(.app, "Tarih biçimi denemesi: göreli=\(probe.relativeText) · kısa=\(probe.shortDateTimeText) · uzun=\(probe.longDateText)")
                 await store.syncSignInState()
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(120))
+                    try? await Task.sleep(for: .seconds(30))
                     guard !Task.isCancelled else { break }
                     if store.isSignedIn {
-                        AppLog.debug(.refresh, "Otomatik yenileme zamanı (120 sn)")
+                        AppLog.debug(.refresh, "Otomatik yenileme zamanı (30 sn)")
                         await store.refresh()
                     }
                 }
@@ -35,6 +35,7 @@ struct RootView: View {
 private struct ThemedTabs: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(GarageStore.self) private var store
+    @AppStorage("theme") private var themeRaw = AppTheme.system.rawValue
 
     var body: some View {
         TabView {
@@ -43,9 +44,9 @@ private struct ThemedTabs: View {
             Tab("Klima", systemImage: "fan.fill") { ClimateView() }
             Tab("Şarj", systemImage: "bolt.fill") { ChargeView() }
             Tab("Konum", systemImage: "location.fill") { LocationView() }
-            Tab("Daha fazla", systemImage: "ellipsis") { MoreView() }
+            Tab("Menü", systemImage: "square.grid.2x2.fill") { MoreView() }
         }
-        .tint(Theme.accent(for: scheme))
+        .tint(Theme.accent(for: scheme, theme: AppTheme(rawValue: themeRaw) ?? .system))
     }
 }
 

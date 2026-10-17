@@ -105,6 +105,35 @@ enum OnDeviceExplainer {
         let response = try await session.respond(to: "Günlük:\n\(logText)")
         return response.content
     }
+
+    static func summarizeAnalytics(_ analyticsText: String) async throws -> String {
+        let session = LanguageModelSession(instructions: """
+            Sen Togg araç analiz yardımcısısın. Verilen yolculuk ve şarj ölçümlerini sade Türkçe ile özetle.
+            En fazla 4 cümle yaz: önce belirgin eğilimi söyle, sonra yalnızca veriden desteklenen bir veya iki öneri ver.
+            Verilmeyen değerleri uydurma. Güvenlik, bakım veya menzil konusunda kesin hüküm verme.
+            """)
+        let response = try await session.respond(to: "Araç analiz verileri:\n\(analyticsText)")
+        return response.content
+    }
+
+    static func summarizeHealth(_ healthText: String) async throws -> String {
+        let session = LanguageModelSession(instructions: """
+            Sen araç telemetrisi açıklayan bir yardımcı rolündesin. Verilen ölçümleri ve ön değerlendirmeleri sade Türkçe ile açıkla.
+            En fazla 4 cümle yaz. Öncelik sırasını belirt; kesin teşhis, güvenlik garantisi veya bakım kararı verme.
+            Sadece verilen verilere dayan ve belirsizliği açıkça söyle.
+            """)
+        let response = try await session.respond(to: "Araç sağlık verileri:\n\(healthText)")
+        return response.content
+    }
+
+    static func summarizeRange(_ rangeText: String) async throws -> String {
+        let session = LanguageModelSession(instructions: """
+            Sen elektrikli araç menzil verilerini açıklayan bir yardımcısın. Hesaplanan tahmin ile araç göstergesini sade Türkçe ile karşılaştır.
+            En fazla 3 cümle yaz. Tahmini kesin gerçek gibi sunma; yalnızca verilen değerlere dayan ve belirsizliği belirt.
+            """)
+        let response = try await session.respond(to: "Menzil verileri:\n\(rangeText)")
+        return response.content
+    }
 }
 
 // MARK: - Ekran

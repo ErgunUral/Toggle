@@ -28,6 +28,11 @@ nonisolated struct ClimateState: Sendable, Equatable {
     let temperature: Double?
 }
 
+nonisolated struct DigitalCertificateResponse: Sendable, Equatable {
+    let certificateBase64: String
+    let vehiclePublicKey: String?
+}
+
 nonisolated struct ClimateCommandResult: Sendable, Equatable {
     let requestID: String?
     let status: String

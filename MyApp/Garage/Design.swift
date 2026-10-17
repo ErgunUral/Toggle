@@ -11,7 +11,7 @@ typealias PlatformImage = NSImage
 // MARK: - Tema
 
 enum AppTheme: String, CaseIterable, Identifiable {
-    case system, light, dark
+    case system, light, dark, ocean, sunset
 
     var id: String { rawValue }
 
@@ -20,41 +20,92 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .system: "Sistem"
         case .light: "Açık"
         case .dark: "Koyu"
+        case .ocean: "Okyanus"
+        case .sunset: "Günbatımı"
+        }
+    }
+
+    var description: LocalizedStringKey {
+        switch self {
+        case .system: "Cihaz görünümünü kullan"
+        case .light: "Aydınlık ve sade"
+        case .dark: "Koyu ve sakin"
+        case .ocean: "Derin mavi ve serin"
+        case .sunset: "Sıcak turuncu tonlar"
         }
     }
 
     var colorScheme: ColorScheme? {
         switch self {
         case .system: nil
-        case .light: .light
-        case .dark: .dark
+        case .light, .sunset: .light
+        case .dark, .ocean: .dark
         }
     }
 }
 
 enum Theme {
-    /// Koyu temada açık turkuaz, açık temada okunabilir kalması için daha koyu bir ton.
-    static func accent(for scheme: ColorScheme) -> Color {
-        scheme == .dark
-            ? Color(red: 0.608, green: 0.792, blue: 0.792)
-            : Color(red: 0.05, green: 0.47, blue: 0.50)
+    /// Seçili temaya göre markanın turkuaz ve elektrik mavisi tonlarını korur.
+    static func accent(for scheme: ColorScheme, theme: AppTheme = .system) -> Color {
+        switch theme {
+        case .ocean:
+            return ToggGarageBrand.electric
+        case .sunset:
+            return ToggGarageBrand.signal
+        case .dark:
+            return ToggGarageBrand.turquoiseLight
+        case .light:
+            return ToggGarageBrand.turquoise
+        case .system:
+            return scheme == .dark
+                ? ToggGarageBrand.turquoiseLight
+                : ToggGarageBrand.turquoise
+        }
+    }
+
+    static func background(for scheme: ColorScheme, theme: AppTheme) -> Color {
+        switch theme {
+        case .ocean, .dark:
+            return ToggGarageBrand.midnight
+        case .sunset:
+            return Color(red: 0.98, green: 0.94, blue: 0.89)
+        case .light:
+            return ToggGarageBrand.cloud
+        case .system:
+            return scheme == .dark
+                ? ToggGarageBrand.midnight
+                : ToggGarageBrand.cloud
+        }
     }
 }
 
 /// Ekranın arkasındaki, üstten turkuaz ışık süzülen zemin.
 struct AppBackground: View {
     @Environment(\.colorScheme) private var scheme
+    @AppStorage("theme") private var themeRaw = AppTheme.system.rawValue
+
+    private var theme: AppTheme {
+        AppTheme(rawValue: themeRaw) ?? .system
+    }
 
     var body: some View {
         ZStack {
-            (scheme == .dark
-                ? Color(red: 0.065, green: 0.07, blue: 0.078)
-                : Color(red: 0.94, green: 0.955, blue: 0.962))
+            LinearGradient(
+                colors: scheme == .dark
+                    ? [ToggGarageBrand.midnight, ToggGarageBrand.graphite]
+                    : [ToggGarageBrand.cloud, Color.white],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
             RadialGradient(
-                colors: [Theme.accent(for: scheme).opacity(scheme == .dark ? 0.30 : 0.28), .clear],
-                center: .top,
+                colors: [
+                    Theme.accent(for: scheme, theme: theme).opacity(scheme == .dark ? 0.26 : 0.18),
+                    .clear
+                ],
+                center: .topTrailing,
                 startRadius: 0,
-                endRadius: 560
+                endRadius: 520
             )
         }
         .ignoresSafeArea()
@@ -69,7 +120,17 @@ extension View {
         self
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            .glassEffect(
+                .regular.tint(ToggGarageBrand.turquoise.opacity(0.07)),
+                in: .rect(cornerRadius: cornerRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(
+                        ToggGarageBrand.turquoise.opacity(0.10),
+                        lineWidth: 1
+                    )
+            }
     }
 }
 

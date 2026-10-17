@@ -10,6 +10,7 @@ nonisolated enum LogCategory: String, CaseIterable, Identifiable, Sendable {
     case network = "Ağ"
     case parse = "Ayrıştırma"
     case refresh = "Yenileme"
+    case cache = "Önbellek"
 
     var id: String { rawValue }
 }

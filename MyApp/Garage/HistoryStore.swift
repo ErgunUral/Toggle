@@ -1,16 +1,26 @@
 import Foundation
+import CoreLocation
 import Observation
 
-/// Araçtan okunan bir ölçüm. Konum saklanmaz.
+/// Araçtan okunan bir ölçüm. Konum geçmişi de isteğe bağlı olarak saklanır.
 nonisolated struct HistoryPoint: Codable, Identifiable, Sendable {
     var date: Date
+    var latitude: Double?
+    var longitude: Double?
     var battery: Double?
     var rangeKm: Double?
     var odometerKm: Double?
     var outsideTemp: Double?
     var isCharging: Bool?
+    var driveMode: String?
+    var softwareVersion: String?
     /// 12 V yardımcı akü doluluğu, 0...1. Eski kayıtlarda yoktur.
     var auxBattery: Double?
+    var usableCapacityKWh: Double?
+    var tireFrontLeftPSI: Double?
+    var tireFrontRightPSI: Double?
+    var tireRearLeftPSI: Double?
+    var tireRearRightPSI: Double?
 
     var id: Date { date }
 }
@@ -47,12 +57,21 @@ final class HistoryStore {
         }
         points.append(HistoryPoint(
             date: date,
+            latitude: snapshot.coordinate?.latitude,
+            longitude: snapshot.coordinate?.longitude,
             battery: snapshot.battery,
             rangeKm: snapshot.range,
             odometerKm: snapshot.odometer,
             outsideTemp: snapshot.outside,
             isCharging: snapshot.isCharging,
-            auxBattery: snapshot.auxBattery
+            driveMode: snapshot.driveMode,
+            softwareVersion: snapshot.softwareVersion,
+            auxBattery: snapshot.auxBattery,
+            usableCapacityKWh: snapshot.usableCapacityKWh,
+            tireFrontLeftPSI: snapshot.tires.frontLeft,
+            tireFrontRightPSI: snapshot.tires.frontRight,
+            tireRearLeftPSI: snapshot.tires.rearLeft,
+            tireRearRightPSI: snapshot.tires.rearRight
         ))
         if points.count > maximumPoints { points.removeFirst(points.count - maximumPoints) }
         AppLog.info(.refresh, "Geçmiş: kayıt eklendi (toplam \(points.count))")
@@ -112,6 +131,34 @@ final class HistoryStore {
         let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
         return points
             .filter { $0.date >= start && $0.auxBattery != nil }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// Son `days` gündeki konum kayıtları, eskiden yeniye.
+    func locationPoints(lastDays days: Int, now: Date = .now) -> [HistoryPoint] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return points
+            .filter { $0.date >= start && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// Son `days` gündeki batarya kapasitesi tahminleri, eskiden yeniye.
+    func capacityPoints(lastDays days: Int, now: Date = .now) -> [HistoryPoint] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return points
+            .filter { $0.date >= start && $0.usableCapacityKWh != nil }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// Son `days` gündeki lastik basınçları, eskiden yeniye.
+    func tirePressurePoints(lastDays days: Int, now: Date = .now) -> [HistoryPoint] {
+        let start = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        return points
+            .filter {
+                $0.date >= start &&
+                [$0.tireFrontLeftPSI, $0.tireFrontRightPSI, $0.tireRearLeftPSI, $0.tireRearRightPSI]
+                    .contains { $0 != nil }
+            }
             .sorted { $0.date < $1.date }
     }
 

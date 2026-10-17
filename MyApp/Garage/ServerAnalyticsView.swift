@@ -45,6 +45,14 @@ struct ServerAnalyticsView: View {
                     content
                 }
 
+                if (tab == .summary && !blocks.isEmpty) || (tab != .summary && !page.records.isEmpty) {
+                    AIAnalyticsSummaryCard(
+                        blocks: blocks,
+                        records: page.records,
+                        isCharge: tab == .charges
+                    )
+                }
+
                 if isLoading { ProgressView() }
             }
             .padding(.horizontal, 20)
