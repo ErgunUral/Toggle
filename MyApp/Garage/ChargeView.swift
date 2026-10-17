@@ -41,6 +41,10 @@ struct ChargeView: View {
                         )
                         SmartChargingSuggestionCard(snapshot: store.snapshot)
                         LiveChargeEstimateCard(snapshot: store.snapshot)
+                        ChargeCostCard(
+                            snapshot: store.snapshot,
+                            sessions: store.history.chargeSessions(lastDays: 30)
+                        )
                         NavigationLink {
                             BatteryHealthView()
                         } label: {
