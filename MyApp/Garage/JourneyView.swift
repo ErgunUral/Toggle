@@ -84,6 +84,7 @@ struct JourneyView: View {
             )
             batteryChart(batteryPoints)
             summary(trips: trips, distances: distances, recordCount: history.points.count)
+            WeeklyEconomyCard(trips: history.trips(lastDays: 8 * 7))
             tripList(trips)
             VStack(spacing: 12) {
                 SectionTitle("Şarj oturumları")

@@ -420,3 +420,52 @@ struct ClimateCommandResultTests {
         }
     }
 }
+
+// MARK: - Haftalık ekonomi puanı
+
+struct WeeklyEconomyTests {
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    /// `daysAgo` gün önce biten, 20 km'lik ve verilen yüzde puan batarya harcayan gezi.
+    private func trip(daysAgo: Double, usedPercent: Double, km: Double = 20) -> DerivedTrip {
+        let end = now.addingTimeInterval(-daysAgo * 86_400)
+        return DerivedTrip(
+            start: end.addingTimeInterval(-1_800),
+            end: end,
+            distanceKm: km,
+            startBattery: 0.9,
+            endBattery: 0.9 - usedPercent / 100,
+            averageOutsideTemp: nil
+        )
+    }
+
+    @Test func returnsRequestedNumberOfWindowsOldestFirst() {
+        let weeks = WeeklyEconomy.scores(from: [], weeks: 4, now: now)
+        #expect(weeks.count == 4)
+        #expect(weeks.map(\.start) == weeks.map(\.start).sorted())
+        #expect(weeks.allSatisfy { $0.score == nil })
+    }
+
+    @Test func tripsFallIntoTheirWeek() {
+        // %4 / 20 km = %20 / 100 km → 12...32 ölçeğinde 60 puan.
+        let weeks = WeeklyEconomy.scores(from: [trip(daysAgo: 2, usedPercent: 4), trip(daysAgo: 10, usedPercent: 2)], weeks: 2, now: now)
+        #expect(abs((weeks[1].score ?? 0) - 60) < 0.001)
+        // %2 / 20 km = %10 / 100 km → 100 (üst sınır).
+        #expect(weeks[0].score == 100)
+    }
+
+    @Test func changeComparesLastTwoScoredWeeks() {
+        let weeks = WeeklyEconomy.scores(from: [trip(daysAgo: 2, usedPercent: 4), trip(daysAgo: 10, usedPercent: 2)], weeks: 3, now: now)
+        #expect(abs((WeeklyEconomy.change(in: weeks) ?? 0) + 40) < 0.001)
+    }
+
+    @Test func noChangeWithSingleScoredWeek() {
+        let weeks = WeeklyEconomy.scores(from: [trip(daysAgo: 2, usedPercent: 4)], weeks: 3, now: now)
+        #expect(WeeklyEconomy.change(in: weeks) == nil)
+    }
+
+    @Test func tooShortDistanceHasNoScore() {
+        let weeks = WeeklyEconomy.scores(from: [trip(daysAgo: 1, usedPercent: 1, km: 5)], weeks: 1, now: now)
+        #expect(weeks[0].score == nil)
+    }
+}
