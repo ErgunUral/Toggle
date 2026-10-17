@@ -591,6 +591,12 @@ struct DigitalKeyView: View {
                     }
                 }
 
+                if let status = bluetooth.vehicleStatus {
+                    LabeledContent("Kapı kilidi", value: status.lock.title)
+                    LabeledContent("Bagaj", value: status.trunk.title)
+                    LabeledContent("Araç durumu", value: status.power.title)
+                }
+
                 if !bluetooth.discoveredCharacteristics.isEmpty {
                     Text("\(bluetooth.discoveredCharacteristics.count) BLE karakteristiği keşfedildi")
                         .font(.caption)
@@ -723,11 +729,15 @@ struct DigitalKeyView: View {
 
         }
         .onAppear {
+            bluetooth.setVehiclePublicKey(digitalKeyStore.vehiclePublicKey)
             if proximityUnlockEnabled {
                 proximityUnlockCompleted = false
                 proximityUnlockMessage = nil
                 bluetooth.startScan()
             }
+        }
+        .onChange(of: digitalKeyStore.vehiclePublicKey, initial: false) { _, key in
+            bluetooth.setVehiclePublicKey(key)
         }
         .onChange(of: proximityUnlockEnabled, initial: false) { _, enabled in
             proximityUnlockCompleted = false
@@ -963,6 +973,37 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+private extension ToggBLEProtocol.VehicleStatus.Lock {
+    var title: String {
+        switch self {
+        case .locked: "Kilitli"
+        case .unlocked: "Açık"
+        case .unknown: "Bilinmiyor"
+        }
+    }
+}
+
+private extension ToggBLEProtocol.VehicleStatus.Trunk {
+    var title: String {
+        switch self {
+        case .closed: "Kapalı"
+        case .ajar: "Açık"
+        case .unknown: "Bilinmiyor"
+        }
+    }
+}
+
+private extension ToggBLEProtocol.VehicleStatus.Power {
+    var title: String {
+        switch self {
+        case .standby: "Bekleme"
+        case .accessory: "Aksesuar"
+        case .ready: "Hazır"
+        case .unknown: "Doğrulanıyor"
         }
     }
 }

@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CryptoKit
 import Foundation
 import Observation
 import UserNotifications
@@ -90,6 +91,9 @@ final class BLEGarageManager: NSObject {
     /// Protokol şeması doğrulanana kadar byte'lar çözümlenmeden tutulur.
     private(set) var latestTelemetry: Data?
     private(set) var latestTelemetryHex: String?
+    /// İmzası araç açık anahtarıyla doğrulanmış son durum. Anahtar yoksa ya da imza hatalıysa nil kalır.
+    private(set) var vehicleStatus: ToggBLEProtocol.VehicleStatus?
+    private var telemetryVerificationKey: P256.Signing.PublicKey?
     private(set) var lastSignedFrame: SignedBLEFrame?
 
     private var centralManager: CBCentralManager?
@@ -146,6 +150,7 @@ final class BLEGarageManager: NSObject {
         discoveredCharacteristics = []
         latestTelemetry = nil
         latestTelemetryHex = nil
+        vehicleStatus = nil
         peripheral = nil
         state = .scanning
         centralManager.scanForPeripherals(
@@ -153,6 +158,31 @@ final class BLEGarageManager: NSObject {
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
         AppLog.info(.app, "BLE: araç servisi için tarama başladı")
+    }
+
+    /// Telemetri paketlerini doğrulamak için aracın açık anahtarını ayarlar. Anahtar yoksa durum çözülmez.
+    func setVehiclePublicKey(_ text: String?) {
+        guard let text, let key = try? ToggBLEProtocol.parseVehiclePublicKey(text) else {
+            telemetryVerificationKey = nil
+            vehicleStatus = nil
+            return
+        }
+        telemetryVerificationKey = key
+        if let latestTelemetry {
+            applyTelemetryStatus(latestTelemetry)
+        }
+    }
+
+    private func applyTelemetryStatus(_ packet: Data) {
+        guard let key = telemetryVerificationKey else { return }
+        do {
+            let status = try ToggBLEProtocol.decodeTelemetry(packet, vehicleKey: key)
+            // Eski ya da tekrar oynatılan paketi yok sayar.
+            guard status.isNewer(than: vehicleStatus) else { return }
+            vehicleStatus = status
+        } catch {
+            AppLog.warning(.app, "BLE: telemetry paketi doğrulanamadı: \(error)")
+        }
     }
 
     func stopScan() {
@@ -178,6 +208,7 @@ final class BLEGarageManager: NSObject {
         discoveredCharacteristics = []
         latestTelemetry = nil
         latestTelemetryHex = nil
+        vehicleStatus = nil
         commandCharacteristic = nil
         vehicleTimeCharacteristic = nil
         pendingChallenge?.resume(throwing: BLEGarageError.notConnected)
@@ -371,6 +402,7 @@ final class BLEGarageManager: NSObject {
                 self.latestTelemetry = value
                 self.latestTelemetryHex = value.map { String(format: "%02X", $0) }.joined(separator: " ")
                 AppLog.debug(.app, "BLE: telemetry paketi alındı (\(value.count) bayt)")
+                self.applyTelemetryStatus(value)
                 return
             }
 

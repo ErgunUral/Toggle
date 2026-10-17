@@ -469,3 +469,90 @@ struct WeeklyEconomyTests {
         #expect(weeks[0].score == nil)
     }
 }
+
+// MARK: - BLE telemetri paketi
+
+import CryptoKit
+
+struct BLETelemetryTests {
+    /// Araç anahtarıyla imzalanmış geçerli bir 93 baytlık paket üretir.
+    private func packet(
+        key: P256.Signing.PrivateKey,
+        lock: UInt8 = 1, doors: [UInt8] = [0, 0, 0, 0], trunk: UInt8 = 0, power: UInt8 = 4, counter: UInt8 = 7
+    ) throws -> Data {
+        var bytes = [UInt8](repeating: 0, count: 93)
+        bytes[0] = 38; bytes[2] = 85; bytes[3] = 0; bytes[4] = 85; bytes[5] = 0
+        bytes[10] = lock
+        for (offset, door) in doors.enumerated() { bytes[11 + offset] = door }
+        bytes[15] = trunk
+        bytes[22] = power
+        bytes[23] = counter
+        let signature = try key.signature(for: Data(bytes[8..<29]))
+        bytes.replaceSubrange(29..<93, with: [UInt8](signature.rawRepresentation))
+        return Data(bytes)
+    }
+
+    @Test func decodesVerifiedPacket() throws {
+        let key = P256.Signing.PrivateKey()
+        let status = try ToggBLEProtocol.decodeTelemetry(try packet(key: key, lock: 2, trunk: 1, power: 3, counter: 9), vehicleKey: key.publicKey)
+        #expect(status.lock == .unlocked)
+        #expect(status.trunk == .ajar)
+        #expect(status.power == .accessory)
+        #expect(status.counter == 9)
+    }
+
+    @Test func rejectsPacketSignedWithAnotherKey() throws {
+        let vehicle = P256.Signing.PrivateKey()
+        let other = P256.Signing.PrivateKey()
+        #expect(throws: ToggBLEProtocol.TelemetryError.invalidSignature) {
+            try ToggBLEProtocol.decodeTelemetry(try packet(key: other), vehicleKey: vehicle.publicKey)
+        }
+    }
+
+    @Test func rejectsTamperedPacket() throws {
+        let key = P256.Signing.PrivateKey()
+        var data = [UInt8](try packet(key: key))
+        data[10] = 2   // imzalı bölgede değişiklik
+        #expect(throws: ToggBLEProtocol.TelemetryError.invalidSignature) {
+            try ToggBLEProtocol.decodeTelemetry(Data(data), vehicleKey: key.publicKey)
+        }
+    }
+
+    @Test func rejectsWrongSizeOrHeader() throws {
+        let key = P256.Signing.PrivateKey()
+        #expect(throws: ToggBLEProtocol.TelemetryError.invalidPacket) {
+            try ToggBLEProtocol.decodeTelemetry(Data(repeating: 0, count: 92), vehicleKey: key.publicKey)
+        }
+        var data = [UInt8](try packet(key: key))
+        data[0] = 0
+        #expect(throws: ToggBLEProtocol.TelemetryError.invalidPacket) {
+            try ToggBLEProtocol.decodeTelemetry(Data(data), vehicleKey: key.publicKey)
+        }
+    }
+
+    @Test func counterAcceptsOnlyForwardProgress() throws {
+        let key = P256.Signing.PrivateKey()
+        func status(_ counter: UInt8) throws -> ToggBLEProtocol.VehicleStatus {
+            try ToggBLEProtocol.decodeTelemetry(try packet(key: key, counter: counter), vehicleKey: key.publicKey)
+        }
+        #expect(try status(5).isNewer(than: nil))
+        #expect(try status(6).isNewer(than: status(5)))
+        #expect(try !status(5).isNewer(than: status(5)))
+        #expect(try !status(4).isNewer(than: status(5)))
+        // 255 → 1 sayaç taşması ileri sayılır.
+        #expect(try status(1).isNewer(than: status(255)))
+    }
+
+    @Test func parsesKeyFormats() throws {
+        let key = P256.Signing.PrivateKey().publicKey
+        let raw = key.rawRepresentation
+        let hex = raw.map { String(format: "%02x", $0) }.joined()
+        #expect(try ToggBLEProtocol.parseVehiclePublicKey(hex).rawRepresentation == raw)
+        #expect(try ToggBLEProtocol.parseVehiclePublicKey("0x04" + hex).rawRepresentation == raw)
+        #expect(try ToggBLEProtocol.parseVehiclePublicKey(raw.base64EncodedString()).rawRepresentation == raw)
+        #expect(try ToggBLEProtocol.parseVehiclePublicKey(key.derRepresentation.base64EncodedString()).rawRepresentation == raw)
+        #expect(throws: ToggBLEProtocol.TelemetryError.invalidKey) {
+            try ToggBLEProtocol.parseVehiclePublicKey("not a key")
+        }
+    }
+}
